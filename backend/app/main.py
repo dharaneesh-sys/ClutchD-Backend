@@ -1,10 +1,13 @@
 import json
+import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -12,6 +15,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import select
 
 from app.api.v1.router import api_router
+from app.api.v1.token import router as token_router
 from app.core.config import get_settings
 from app.core.limiter import limiter as app_limiter
 from app.core.security import decode_token
@@ -19,7 +23,15 @@ from app.db.session import AsyncSessionLocal
 from app.models.user import User
 from app.ws.manager import manager, push_location_update
 
+logger = logging.getLogger(__name__)
+
 settings = get_settings()
+
+# ---- WebSocket safety limits ----
+MAX_WS_MESSAGE_SIZE = 4096         # bytes — reject anything larger
+WS_MSG_RATE_LIMIT = 10             # max messages per second per connection
+LOCATION_DB_INTERVAL_SEC = 30      # throttle how often we persist GPS to DB
+_last_db_persist: dict[str, float] = {}  # user_id -> timestamp of last DB write
 
 
 @asynccontextmanager
@@ -43,10 +55,40 @@ app.add_middleware(
 )
 
 app.include_router(api_router, prefix=settings.api_prefix)
+app.include_router(token_router, prefix=settings.api_prefix)
 
 static_dir = Path(settings.upload_dir)
 static_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/static/uploads", StaticFiles(directory=str(static_dir)), name="static_uploads")
+
+
+# ---- Security headers middleware ----
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(self), camera=(self)"
+    # Removed HSTS header from application level; usually handled by Nginx/Traefik in prod.
+    return response
+
+
+# ---- Global exception handler ----
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled server error: %s", exc, exc_info=True)
+    if settings.debug:
+        # In debug mode, return the real error for development
+        return JSONResponse(
+            status_code=500,
+            content={"detail": str(exc)},
+        )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 
 @app.get("/health")
@@ -54,59 +96,97 @@ async def health():
     return {"status": "ok"}
 
 
-@app.websocket("/ws")
-async def websocket_user(websocket: WebSocket, token: str | None = None):
+async def _authenticate_ws(websocket: WebSocket, token: str | None) -> User | None:
+    """Shared auth helper for WebSocket endpoints. Returns the User or None."""
     if not token:
         await websocket.close(code=4401)
-        return
+        return None
     payload = decode_token(token)
     if not payload or "sub" not in payload:
         await websocket.close(code=4401)
-        return
+        return None
     try:
         uid = UUID(payload["sub"])
     except ValueError:
         await websocket.close(code=4401)
-        return
+        return None
     async with AsyncSessionLocal() as db:
         r = await db.execute(select(User).where(User.id == uid, User.is_active.is_(True)))
         user = r.scalar_one_or_none()
     if not user:
         await websocket.close(code=4401)
+        return None
+    return user
+
+
+@app.websocket("/ws")
+async def websocket_user(websocket: WebSocket, token: str | None = None):
+    user = await _authenticate_ws(websocket, token)
+    if not user:
         return
+
     await manager.connect_user(str(user.id), websocket)
+    # Per-connection rate limiter
+    msg_timestamps: list[float] = []
+
     try:
         while True:
             raw = await websocket.receive_text()
+
+            # ---- Size guard ----
+            if len(raw) > MAX_WS_MESSAGE_SIZE:
+                continue
+
+            # ---- Rate guard ----
+            now = time.monotonic()
+            msg_timestamps = [t for t in msg_timestamps if now - t < 1.0]
+            if len(msg_timestamps) >= WS_MSG_RATE_LIMIT:
+                continue  # Silently drop — client is flooding
+            msg_timestamps.append(now)
+
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
                 continue
+
             if msg.get("type") == "MECHANIC_LOCATION" and user.role == "mechanic":
                 lat, lon = msg.get("lat"), msg.get("lon")
                 if lat is None or lon is None:
                     continue
-                from sqlalchemy import select as sa_select
+                try:
+                    lat_f, lon_f = float(lat), float(lon)
+                except (ValueError, TypeError):
+                    continue
 
+                # Always push real-time location to connected customers
                 from app.models.job import Job
                 from app.models.mechanic import Mechanic
 
                 async with AsyncSessionLocal() as db:
-                    mr = await db.execute(sa_select(Mechanic).where(Mechanic.user_id == user.id))
+                    mr = await db.execute(select(Mechanic).where(Mechanic.user_id == user.id))
                     mech = mr.scalar_one_or_none()
                     if not mech:
                         continue
-                    mech.lat = float(lat)
-                    mech.lon = float(lon)
-                    await db.commit()
+
+                    # Push live location over WebSocket immediately (no DB)
                     jr = await db.execute(
-                        sa_select(Job).where(
+                        select(Job).where(
                             Job.assigned_mechanic_id == mech.id,
                             Job.status.in_(("assigned", "en_route", "in_progress")),
                         )
                     )
                     for job in jr.scalars().all():
-                        await push_location_update(str(job.user_id), str(job.id), [float(lat), float(lon)])
+                        await push_location_update(str(job.user_id), str(job.id), [lat_f, lon_f])
+
+                    # Throttle DB persistence to reduce load
+                    uid_str = str(user.id)
+                    last_persist = _last_db_persist.get(uid_str, 0.0)
+                    if time.time() - last_persist >= LOCATION_DB_INTERVAL_SEC:
+                        mech.lat = lat_f
+                        mech.lon = lon_f
+                        await db.commit()
+                        _last_db_persist[uid_str] = time.time()
+
     except WebSocketDisconnect:
         pass
     finally:
@@ -115,23 +195,8 @@ async def websocket_user(websocket: WebSocket, token: str | None = None):
 
 @app.websocket("/ws/tracking/{job_id}")
 async def websocket_tracking(websocket: WebSocket, job_id: str, token: str | None = None):
-    if not token:
-        await websocket.close(code=4401)
-        return
-    payload = decode_token(token)
-    if not payload or "sub" not in payload:
-        await websocket.close(code=4401)
-        return
-    try:
-        uid = UUID(payload["sub"])
-    except ValueError:
-        await websocket.close(code=4401)
-        return
-    async with AsyncSessionLocal() as db:
-        r = await db.execute(select(User).where(User.id == uid, User.is_active.is_(True)))
-        user = r.scalar_one_or_none()
+    user = await _authenticate_ws(websocket, token)
     if not user:
-        await websocket.close(code=4401)
         return
     try:
         jid = UUID(job_id)
@@ -148,7 +213,10 @@ async def websocket_tracking(websocket: WebSocket, job_id: str, token: str | Non
     await manager.connect_job(job_id, websocket)
     try:
         while True:
-            await websocket.receive_text()
+            raw = await websocket.receive_text()
+            # Rate/size guard on tracking socket too
+            if len(raw) > MAX_WS_MESSAGE_SIZE:
+                continue
     except WebSocketDisconnect:
         pass
     finally:

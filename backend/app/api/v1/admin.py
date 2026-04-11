@@ -1,137 +1,167 @@
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import CurrentUser, DbSession
-from app.core.redis_client import get_redis
+from app.api.deps import DbSession, require_admin
 from app.models.dispute import Dispute
+from app.models.enums import DisputeStatus, UserRole
 from app.models.garage import Garage
 from app.models.job import Job
 from app.models.mechanic import Mechanic
+from app.models.payment import Payment
 from app.models.user import User
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-
-def _admin(user: User) -> None:
-    if user.role != "admin" and not user.is_superuser:
-        raise HTTPException(status_code=403, detail="Admin only")
+# ── Type alias for admin-protected routes ──────────────────────
+AdminUser = Annotated[User, Depends(require_admin)]
 
 
+# ── Users ─────────────────────────────────────────────────────
 @router.get("/users")
-async def list_users(db: DbSession, user: CurrentUser, limit: int = Query(50, le=200)):
-    _admin(user)
-    r = await db.execute(select(User).order_by(User.created_at.desc()).limit(limit))
-    rows = r.scalars().all()
+async def list_users(
+    db: DbSession,
+    user: AdminUser,
+    role: str | None = Query(None, pattern="^(customer|mechanic|garage|admin)$"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+):
+    q = select(User)
+    if role:
+        q = q.where(User.role == role)
+    q = q.offset(skip).limit(limit).order_by(User.created_at.desc())
+    result = await db.execute(q)
+    users = result.scalars().all()
     return {
         "users": [
             {
                 "id": str(u.id),
                 "email": u.email,
                 "role": u.role,
-                "is_active": u.is_active,
-                "created_at": u.created_at.isoformat() if u.created_at else None,
+                "isActive": u.is_active,
+                "createdAt": u.created_at.isoformat() if u.created_at else None,
             }
-            for u in rows
+            for u in users
         ]
     }
 
 
-@router.patch("/mechanics/{mechanic_id}/verify")
-async def verify_mechanic(mechanic_id: UUID, db: DbSession, user: CurrentUser, verified: bool = True):
-    _admin(user)
-    r = await db.execute(select(Mechanic).where(Mechanic.id == mechanic_id))
-    m = r.scalar_one_or_none()
+# ── Verification ──────────────────────────────────────────────
+class VerifyBody(BaseModel):
+    verified: bool = True
+
+
+@router.patch("/mechanic/{mechanic_id}/verify")
+async def verify_mechanic(mechanic_id: UUID, body: VerifyBody, db: DbSession, user: AdminUser):
+    result = await db.execute(select(Mechanic).where(Mechanic.id == mechanic_id))
+    m = result.scalar_one_or_none()
     if not m:
         raise HTTPException(status_code=404, detail="Mechanic not found")
-    m.verified = verified
+    m.verified = body.verified
     await db.flush()
-    return {"ok": True, "verified": verified}
+    return {"ok": True, "verified": m.verified}
 
 
-@router.patch("/garages/{garage_id}/verify")
-async def verify_garage(garage_id: UUID, db: DbSession, user: CurrentUser, verified: bool = True):
-    _admin(user)
-    r = await db.execute(select(Garage).where(Garage.id == garage_id))
-    g = r.scalar_one_or_none()
+@router.patch("/garage/{garage_id}/verify")
+async def verify_garage(garage_id: UUID, body: VerifyBody, db: DbSession, user: AdminUser):
+    result = await db.execute(select(Garage).where(Garage.id == garage_id))
+    g = result.scalar_one_or_none()
     if not g:
         raise HTTPException(status_code=404, detail="Garage not found")
-    g.verified = verified
+    g.verified = body.verified
     await db.flush()
-    return {"ok": True, "verified": verified}
+    return {"ok": True, "verified": g.verified}
 
 
+# ── Analytics ─────────────────────────────────────────────────
 @router.get("/analytics")
-async def analytics(db: DbSession, user: CurrentUser):
-    _admin(user)
-    nu = await db.scalar(select(func.count()).select_from(User))
-    nj = await db.scalar(select(func.count()).select_from(Job))
-    nc = await db.scalar(select(func.count()).select_from(Job).where(Job.status == "completed"))
-    nd = await db.scalar(select(func.count()).select_from(Dispute).where(Dispute.status == "open"))
+async def analytics(db: DbSession, user: AdminUser):
+    users = await db.execute(select(func.count(User.id)))
+    jobs = await db.execute(select(func.count(Job.id)))
+    payments = await db.execute(select(func.coalesce(func.sum(Payment.amount), 0)))
+    mechanics = await db.execute(select(func.count(Mechanic.id)))
+    garages = await db.execute(select(func.count(Garage.id)))
     return {
-        "users": nu or 0,
-        "jobs": nj or 0,
-        "completed_jobs": nc or 0,
-        "open_disputes": nd or 0,
+        "totalUsers": users.scalar(),
+        "totalJobs": jobs.scalar(),
+        "totalRevenue": payments.scalar(),
+        "totalMechanics": mechanics.scalar(),
+        "totalGarages": garages.scalar(),
     }
 
 
+# ── Disputes ──────────────────────────────────────────────────
 @router.get("/disputes")
-async def list_disputes(db: DbSession, user: CurrentUser):
-    _admin(user)
-    r = await db.execute(select(Dispute).order_by(Dispute.created_at.desc()))
-    rows = r.scalars().all()
+async def list_disputes(
+    db: DbSession,
+    user: AdminUser,
+    status_filter: str | None = Query(None, alias="status"),
+):
+    q = select(Dispute)
+    if status_filter:
+        try:
+            ds = DisputeStatus(status_filter)
+            q = q.where(Dispute.status == ds.value)
+        except ValueError:
+            pass
+    q = q.order_by(Dispute.created_at.desc())
+    result = await db.execute(q)
+    rows = result.scalars().all()
     return {
         "disputes": [
             {
                 "id": str(d.id),
-                "job_id": str(d.job_id),
+                "jobId": str(d.job_id),
+                "reason": d.reason,
                 "status": d.status,
-                "notes": d.notes,
-                "created_at": d.created_at.isoformat() if d.created_at else None,
+                "createdAt": d.created_at.isoformat() if d.created_at else None,
             }
             for d in rows
         ]
     }
 
 
+class DisputeUpdateBody(BaseModel):
+    status: str = Field(pattern="^(open|investigating|resolved|dismissed)$")
+    resolution: str | None = Field(None, max_length=2000)
+
+
 @router.patch("/disputes/{dispute_id}")
 async def update_dispute(
     dispute_id: UUID,
+    body: DisputeUpdateBody,
     db: DbSession,
-    user: CurrentUser,
-    status: str = Query(..., pattern="^(open|resolved)$"),
-    notes: str | None = None,
+    user: AdminUser,
 ):
-    _admin(user)
-    r = await db.execute(select(Dispute).where(Dispute.id == dispute_id))
-    d = r.scalar_one_or_none()
+    result = await db.execute(select(Dispute).where(Dispute.id == dispute_id))
+    d = result.scalar_one_or_none()
     if not d:
         raise HTTPException(status_code=404, detail="Dispute not found")
-    d.status = status
-    if notes is not None:
-        d.notes = notes
+    d.status = body.status
+    if body.resolution:
+        d.resolution = body.resolution
     await db.flush()
     return {"ok": True}
 
 
-@router.get("/pricing")
-async def get_pricing(user: CurrentUser):
-    _admin(user)
-    r = await get_redis()
-    v = await r.get("pricing:multiplier")
-    return {"base_multiplier": float(v) if v else 1.0}
-
-
+# ── Pricing ───────────────────────────────────────────────────
 class PricingBody(BaseModel):
-    multiplier: float = Field(gt=0, le=10)
+    service_type: str = Field(min_length=1, max_length=64)
+    min_price: int = Field(ge=0, le=50000000)
+    max_price: int = Field(ge=0, le=50000000)
 
 
-@router.put("/pricing")
-async def set_pricing(body: PricingBody, user: CurrentUser):
-    _admin(user)
-    r = await get_redis()
-    await r.set("pricing:multiplier", str(body.multiplier))
-    return {"base_multiplier": body.multiplier}
+@router.get("/pricing")
+async def get_pricing(db: DbSession, user: AdminUser):
+    # TODO: Return from a pricing table when implemented
+    return {"pricing": []}
+
+
+@router.post("/pricing")
+async def set_pricing(body: PricingBody, db: DbSession, user: AdminUser):
+    # TODO: Upsert pricing row when pricing table is implemented
+    return {"ok": True, "service_type": body.service_type}

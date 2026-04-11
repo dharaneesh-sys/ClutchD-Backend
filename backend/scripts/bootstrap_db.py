@@ -34,11 +34,33 @@ async def wait_for_database(max_attempts: int = 40, delay_sec: float = 2.0) -> N
     raise RuntimeError(f"Database not reachable after {max_attempts} attempts") from last_err
 
 
+async def run_migrations() -> None:
+    from alembic import command
+    from alembic.config import Config
+    
+    # Run alembic upgrade head
+    alembic_cfg = Config("alembic.ini")
+    # Set the DB URL from settings to ensure it matches environment
+    from app.core.config import get_settings
+    settings = get_settings()
+    alembic_cfg.set_main_option("sqlalchemy.url", settings.database_url)
+    
+    print("Running migrations...")
+    # alembic.command is synchronous, but we are in an async loop. 
+    # For a simple bootstrap script, we can run it in a thread or just run it synchronously.
+    # Since this is a one-time startup script, simple synchronous call is fine or await to_thread.
+    import asyncio
+    await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
+    print("Migrations complete.")
+
+
 async def create_schema() -> None:
     import app.models  # noqa: F401 — register mappers
 
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+        # We still run create_all for regular tables that might not be in alembic yet
+        # though ideally everything should be in alembic.
         await conn.run_sync(Base.metadata.create_all)
 
 
@@ -107,6 +129,80 @@ async def seed() -> None:
         )
         session.add(garage)
 
+        # ---- Extra Mechanic 1: Arjun Reddy ----
+        mu2 = User(
+            email="arjun@demo.com",
+            password_hash=hash_password("demo123456"),
+            role="mechanic",
+        )
+        session.add(mu2)
+        await session.flush()
+
+        mech2 = Mechanic(
+            user_id=mu2.id,
+            full_name="Arjun Reddy",
+            phone="9871234567",
+            experience="8",
+            expertise=["engine", "transmission", "diagnostics", "oil"],
+            location_address="Gandhipuram, Coimbatore",
+            lat=11.0185,
+            lon=76.9725,
+            rating=4.9,
+            verified=True,
+            available=True,
+        )
+        session.add(mech2)
+
+        # ---- Extra Mechanic 2: Deepa Nair ----
+        mu3 = User(
+            email="deepa@demo.com",
+            password_hash=hash_password("demo123456"),
+            role="mechanic",
+        )
+        session.add(mu3)
+        await session.flush()
+
+        mech3 = Mechanic(
+            user_id=mu3.id,
+            full_name="Deepa Nair",
+            phone="9998877665",
+            experience="3",
+            expertise=["electrical", "battery", "ac", "diagnostics"],
+            location_address="Peelamedu, Coimbatore",
+            lat=11.0310,
+            lon=76.9880,
+            rating=4.6,
+            verified=True,
+            available=True,
+        )
+        session.add(mech3)
+
+        # ---- Extra Garage: AutoCare Hub ----
+        gu2 = User(
+            email="autocare@demo.com",
+            password_hash=hash_password("demo123456"),
+            role="garage",
+        )
+        session.add(gu2)
+        await session.flush()
+
+        garage2 = Garage(
+            user_id=gu2.id,
+            garage_name="AutoCare Hub",
+            owner_name="Kavitha Rajan",
+            phone="9876501234",
+            services=["engine", "transmission", "brakes", "tires", "suspension", "diagnostics"],
+            mechanic_count=12,
+            operating_hours="7:00 AM - 10:00 PM",
+            location_address="Avinashi Road, Coimbatore",
+            lat=11.0245,
+            lon=76.9810,
+            rating=4.8,
+            verified=True,
+        )
+        session.add(garage2)
+
+        # ---- Customer ----
         cu = User(
             email="customer@demo.com",
             password_hash=hash_password("demo123456"),
@@ -115,12 +211,17 @@ async def seed() -> None:
         session.add(cu)
 
         await session.commit()
-        print("Seeded admin@mechoncall.com / AdminChangeMe!, mechanic@demo.com, garage@demo.com, customer@demo.com (password demo123456)")
+        print("Seeded all demo accounts (password: demo123456):")
+        print("  admin@mechoncall.com / AdminChangeMe!")
+        print("  mechanic@demo.com, arjun@demo.com, deepa@demo.com")
+        print("  garage@demo.com, autocare@demo.com")
+        print("  customer@demo.com")
 
 
 async def main() -> None:
     await wait_for_database()
     await create_schema()
+    await run_migrations()
     await seed()
 
 

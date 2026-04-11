@@ -22,7 +22,7 @@ async def _ensure_email_free(db: AsyncSession, email: str) -> None:
         raise AuthError("Email already registered", 409)
 
 
-async def register_customer(db: AsyncSession, data: CustomerRegister) -> tuple[str, dict]:
+async def register_customer(db: AsyncSession, data: CustomerRegister) -> tuple[str, dict, str]:
     await _ensure_email_free(db, data.email)
     user = User(
         email=data.email.lower(),
@@ -33,10 +33,10 @@ async def register_customer(db: AsyncSession, data: CustomerRegister) -> tuple[s
     await db.flush()
     token = create_access_token(str(user.id), {"role": user.role})
     payload = await user_to_frontend_dict(db, user)
-    return token, payload
+    return token, payload, str(user.id)
 
 
-async def register_mechanic(db: AsyncSession, data: MechanicRegister) -> tuple[str, dict]:
+async def register_mechanic(db: AsyncSession, data: MechanicRegister) -> tuple[str, dict, str]:
     settings = get_settings()
     verified = settings.dev_auto_verify_providers
     await _ensure_email_free(db, data.email)
@@ -65,10 +65,10 @@ async def register_mechanic(db: AsyncSession, data: MechanicRegister) -> tuple[s
     await db.flush()
     token = create_access_token(str(user.id), {"role": user.role})
     payload = await user_to_frontend_dict(db, user)
-    return token, payload
+    return token, payload, str(user.id)
 
 
-async def register_garage(db: AsyncSession, data: GarageRegister) -> tuple[str, dict]:
+async def register_garage(db: AsyncSession, data: GarageRegister) -> tuple[str, dict, str]:
     settings = get_settings()
     verified = settings.dev_auto_verify_providers
     await _ensure_email_free(db, data.email)
@@ -102,10 +102,10 @@ async def register_garage(db: AsyncSession, data: GarageRegister) -> tuple[str, 
     await db.flush()
     token = create_access_token(str(user.id), {"role": user.role})
     payload = await user_to_frontend_dict(db, user)
-    return token, payload
+    return token, payload, str(user.id)
 
 
-async def signup_from_payload(db: AsyncSession, body: SignupPayload) -> tuple[str, dict]:
+async def signup_from_payload(db: AsyncSession, body: SignupPayload) -> tuple[str, dict, str]:
     if body.role == "customer":
         cr = CustomerRegister(
             email=body.email or "",
@@ -144,7 +144,7 @@ async def signup_from_payload(db: AsyncSession, body: SignupPayload) -> tuple[st
     return await register_garage(db, gr)
 
 
-async def login(db: AsyncSession, email: str, password: str) -> tuple[str, dict]:
+async def login(db: AsyncSession, email: str, password: str) -> tuple[str, dict, str]:
     r = await db.execute(select(User).where(User.email == email.lower()))
     user = r.scalar_one_or_none()
     if not user or not verify_password(password, user.password_hash):
@@ -153,4 +153,4 @@ async def login(db: AsyncSession, email: str, password: str) -> tuple[str, dict]
         raise AuthError("Account disabled", 403)
     token = create_access_token(str(user.id), {"role": user.role})
     payload = await user_to_frontend_dict(db, user)
-    return token, payload
+    return token, payload, str(user.id)

@@ -37,6 +37,9 @@ class Job(Base):
     )
 
     media_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    vehicle_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("vehicles.id", ondelete="SET NULL"), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -44,5 +47,7 @@ class Job(Base):
     customer: Mapped["User"] = relationship("User", back_populates="jobs", foreign_keys=[user_id])
     assigned_mechanic: Mapped["Mechanic | None"] = relationship("Mechanic", foreign_keys=[assigned_mechanic_id])
     assigned_garage: Mapped["Garage | None"] = relationship("Garage", foreign_keys=[assigned_garage_id])
+    vehicle: Mapped["Vehicle | None"] = relationship("Vehicle", foreign_keys=[vehicle_id])
     reviews: Mapped[list["Review"]] = relationship("Review", back_populates="job")
     payments: Mapped[list["Payment"]] = relationship("Payment", back_populates="job")
+    dispute: Mapped["Dispute | None"] = relationship("Dispute", back_populates="job", uselist=False)

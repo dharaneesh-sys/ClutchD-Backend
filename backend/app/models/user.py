@@ -24,3 +24,5 @@ class User(Base):
     mechanic_profile: Mapped["Mechanic | None"] = relationship("Mechanic", back_populates="user", uselist=False)
     garage_profile: Mapped["Garage | None"] = relationship("Garage", back_populates="user", uselist=False)
     jobs: Mapped[list["Job"]] = relationship("Job", back_populates="customer")
+    vehicles: Mapped[list["Vehicle"]] = relationship("Vehicle")
+    notifications: Mapped[list["Notification"]] = relationship("Notification")

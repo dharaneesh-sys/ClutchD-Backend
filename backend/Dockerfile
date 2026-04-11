@@ -4,6 +4,7 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -11,6 +12,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY scripts ./scripts
+COPY migrations ./migrations
+COPY alembic.ini .
+RUN mkdir -p /app/uploads
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1

@@ -1,105 +1,108 @@
-from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
-
-
-class TokenResponse(BaseModel):
-    token: str
-    user: dict[str, Any]
+from pydantic import BaseModel, EmailStr, Field
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=6, max_length=128)
 
 
 class CustomerRegister(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6)
-    confirmPassword: str | None = None
+    password: str = Field(min_length=6, max_length=128)
+    confirmPassword: str | None = Field(None, max_length=128)
 
 
 class MechanicRegister(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6)
-    confirmPassword: str | None = None
-    fullName: str = Field(min_length=2)
-    phone: str = Field(min_length=10)
-    experience: str = Field(min_length=1)
-    expertise: list[str] = Field(min_length=1)
-    location: str = Field(min_length=2)
-    latitude: float | None = None
-    longitude: float | None = None
+    password: str = Field(min_length=6, max_length=128)
+    confirmPassword: str | None = Field(None, max_length=128)
+    fullName: str = Field(min_length=2, max_length=100)
+    phone: str = Field(min_length=10, max_length=15)
+    experience: str = Field(min_length=1, max_length=50)
+    expertise: list[str] = Field(default_factory=list, max_length=20)
+    location: str = Field(min_length=2, max_length=500)
+    latitude: float | None = Field(None, ge=-90, le=90)
+    longitude: float | None = Field(None, ge=-180, le=180)
 
 
 class GarageRegister(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6)
-    confirmPassword: str | None = None
-    garageName: str = Field(min_length=2)
-    ownerName: str = Field(min_length=2)
-    phone: str = Field(min_length=10)
-    location: str = Field(min_length=2)
-    services: list[str] = Field(min_length=1)
-    mechanicCount: str = Field(min_length=1)
-    operatingHours: str = Field(min_length=1)
-    latitude: float | None = None
-    longitude: float | None = None
+    password: str = Field(min_length=6, max_length=128)
+    confirmPassword: str | None = Field(None, max_length=128)
+    garageName: str = Field(min_length=2, max_length=200)
+    ownerName: str = Field(min_length=2, max_length=100)
+    phone: str = Field(min_length=10, max_length=15)
+    location: str = Field(min_length=2, max_length=500)
+    services: list[str] = Field(default_factory=list, max_length=50)
+    mechanicCount: str = Field(min_length=1, max_length=5)
+    operatingHours: str = Field(min_length=1, max_length=50)
+    latitude: float | None = Field(None, ge=-90, le=90)
+    longitude: float | None = Field(None, ge=-180, le=180)
 
 
 class SignupPayload(BaseModel):
-    """Frontend sends role + one of the role-specific shapes."""
-
-    role: Literal["customer", "mechanic", "garage"]
+    """Unified signup body used by the frontend."""
+    role: str = Field(pattern="^(customer|mechanic|garage)$")
     email: EmailStr | None = None
-    password: str | None = None
-    confirmPassword: str | None = None
-    fullName: str | None = None
-    phone: str | None = None
-    experience: str | None = None
-    expertise: list[str] | None = None
-    location: str | None = None
-    garageName: str | None = None
-    ownerName: str | None = None
-    services: list[str] | None = None
-    mechanicCount: str | None = None
-    operatingHours: str | None = None
-    latitude: float | None = None
-    longitude: float | None = None
-
-    @model_validator(mode="after")
-    def validate_role_fields(self):
-        if self.role == "customer":
-            if not self.email or not self.password:
-                raise ValueError("email and password required")
-        elif self.role == "mechanic":
-            for f in ("email", "password", "fullName", "phone", "experience", "expertise", "location"):
-                if getattr(self, f) in (None, [], ""):
-                    raise ValueError(f"{f} required for mechanic")
-            if not self.expertise:
-                raise ValueError("expertise required")
-        elif self.role == "garage":
-            for f in ("email", "password", "garageName", "ownerName", "phone", "location", "services", "mechanicCount", "operatingHours"):
-                if getattr(self, f) in (None, [], ""):
-                    raise ValueError(f"{f} required for garage")
-        return self
+    password: str | None = Field(None, max_length=128)
+    confirmPassword: str | None = Field(None, max_length=128)
+    fullName: str | None = Field(None, max_length=100)
+    phone: str | None = Field(None, max_length=15)
+    experience: str | None = Field(None, max_length=50)
+    expertise: list[str] | None = Field(None, max_length=20)
+    location: str | None = Field(None, max_length=500)
+    garageName: str | None = Field(None, max_length=200)
+    ownerName: str | None = Field(None, max_length=100)
+    services: list[str] | None = Field(None, max_length=50)
+    mechanicCount: str | None = Field(None, max_length=5)
+    operatingHours: str | None = Field(None, max_length=50)
+    latitude: float | None = Field(None, ge=-90, le=90)
+    longitude: float | None = Field(None, ge=-180, le=180)
 
 
 class GoogleOAuthRequest(BaseModel):
-    id_token: str | None = Field(default=None, alias="credential")
-    token: str | None = None
-    role: Literal["customer", "mechanic", "garage"] | None = None
-    model_config = {"populate_by_name": True}
+    credential: str = Field(max_length=8192)
+    role: str | None = Field(None, pattern="^(customer|mechanic|garage)$")
 
-    @model_validator(mode="after")
-    def pick_token(self):
-        t = self.id_token or self.token
-        if not t:
-            raise ValueError("id_token or credential required")
-        self.id_token = t
-        return self
+
+class TokenResponse(BaseModel):
+    token: str
+    user: dict
 
 
 class MessageResponse(BaseModel):
     message: str
+
+
+class UserProfile(BaseModel):
+    id: str
+    email: str
+    role: str
+    name: str | None = None
+    phone: str | None = None
+    experience: str | None = None
+    expertise: list[str] | None = None
+    location: str | None = None
+    rating: float | None = None
+    isOnline: bool | None = None
+    ownerName: str | None = None
+    services: list[str] | None = None
+    mechanicCount: int | None = None
+    operatingHours: str | None = None
+
+
+class ProfileUpdateRequest(BaseModel):
+    """Update mechanic or garage profile fields."""
+    fullName: str | None = Field(None, max_length=100)
+    phone: str | None = Field(None, max_length=15)
+    location: str | None = Field(None, max_length=500)
+    expertise: list[str] | None = Field(None, max_length=20)
+    services: list[str] | None = Field(None, max_length=50)
+    garageName: str | None = Field(None, max_length=200)
+    ownerName: str | None = Field(None, max_length=100)
+    operatingHours: str | None = Field(None, max_length=50)
+    mechanicCount: int | None = Field(None, ge=0, le=999)
+    latitude: float | None = Field(None, ge=-90, le=90)
+    longitude: float | None = Field(None, ge=-180, le=180)

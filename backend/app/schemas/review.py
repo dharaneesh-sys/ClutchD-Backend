@@ -5,15 +5,5 @@ from pydantic import BaseModel, Field
 
 class ReviewCreate(BaseModel):
     job_id: UUID
-    rating: float = Field(ge=1, le=5)
-    comment: str | None = None
-
-
-class ReviewOut(BaseModel):
-    id: UUID
-    job_id: UUID
-    rating: float
-    comment: str | None
-    target_type: str
-
-    model_config = {"from_attributes": True}
+    rating: int = Field(ge=1, le=5)
+    comment: str | None = Field(None, max_length=1000)

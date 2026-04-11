@@ -18,7 +18,8 @@ class Settings(BaseSettings):
 
     jwt_secret_key: str = "change-me-in-production-use-openssl-rand-hex-32"
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60 * 24 * 7
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 7
 
     default_map_lat: float = 11.0168
     default_map_lon: float = 76.9558
@@ -32,6 +33,7 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str | None = None
     razorpay_key_id: str | None = None
     razorpay_key_secret: str | None = None
+    razorpay_webhook_secret: str | None = None
 
     upload_dir: str = "uploads"
     max_upload_mb: int = 10

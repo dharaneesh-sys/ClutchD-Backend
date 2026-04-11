@@ -12,6 +12,22 @@ from app.models.user import User
 from app.services import matching
 from app.ws.manager import push_location_update, push_status_update
 
+# ---- Status transition guard ------------------------------------------------
+VALID_TRANSITIONS: dict[str, set[str]] = {
+    "searching": {"assigned", "cancelled"},
+    "assigned": {"en_route", "cancelled"},
+    "en_route": {"in_progress", "cancelled"},
+    "in_progress": {"completed", "cancelled"},
+    "completed": set(),   # terminal
+    "cancelled": set(),   # terminal
+}
+
+
+def _validate_transition(current: str, target: str) -> bool:
+    """Return True if *target* is a legal successor of *current*."""
+    allowed = VALID_TRANSITIONS.get(current, set())
+    return target in allowed
+
 
 def job_response_dict(job: Job, mechanic_summary: dict | None = None) -> dict[str, Any]:
     return {
@@ -22,28 +38,39 @@ def job_response_dict(job: Job, mechanic_summary: dict | None = None) -> dict[st
         "status": job.status,
         "createdAt": job.created_at.isoformat() if job.created_at else None,
         "priceEstimate": job.price_estimate,
+        "vehicleId": str(job.vehicle_id) if job.vehicle_id else None,
         "mechanic": mechanic_summary,
     }
 
 
 async def assign_job_auto(db: AsyncSession, job: Job) -> Job:
-    lat, lon = job.customer_lat, job.customer_lon
-    mechs = await matching.nearest_mechanics(db, lat, lon, limit=10, issue_tag=job.issue_tag)
+    """Auto-assign a job using an atomic lock to prevent double-assignment."""
+    # Re-fetch with FOR UPDATE so concurrent callers block rather than race
+    r = await db.execute(
+        select(Job).where(Job.id == job.id, Job.status == "searching").with_for_update()
+    )
+    locked_job = r.scalar_one_or_none()
+    if not locked_job:
+        # Another worker already assigned or cancelled this job
+        return job
+
+    lat, lon = locked_job.customer_lat, locked_job.customer_lon
+    mechs = await matching.nearest_mechanics(db, lat, lon, limit=10, issue_tag=locked_job.issue_tag)
     if not mechs:
         mechs = await matching.nearest_mechanics(db, lat, lon, limit=10, issue_tag=None)
-    gar = await matching.nearest_garages(db, lat, lon, limit=10, issue_tag=job.issue_tag)
+    gar = await matching.nearest_garages(db, lat, lon, limit=10, issue_tag=locked_job.issue_tag)
     if not gar:
         gar = await matching.nearest_garages(db, lat, lon, limit=10, issue_tag=None)
 
     choice: tuple[str, UUID, dict] | None = None
 
-    if job.request_type == "mechanic" and mechs:
+    if locked_job.request_type == "mechanic" and mechs:
         m = mechs[0]
         choice = ("mechanic", m.id, {"id": str(m.id), "name": m.full_name, "rating": m.rating, "distance": f"{m.distance_m/1000:.1f} km"})
-    elif job.request_type == "garage" and gar:
+    elif locked_job.request_type == "garage" and gar:
         g = gar[0]
         choice = ("garage", g.id, {"id": str(g.id), "name": g.garage_name, "rating": g.rating, "distance": f"{g.distance_m/1000:.1f} km"})
-    elif job.request_type == "auto":
+    elif locked_job.request_type == "auto":
         best_m = mechs[0] if mechs else None
         best_g = gar[0] if gar else None
         if best_m and best_g:
@@ -94,27 +121,32 @@ async def assign_job_auto(db: AsyncSession, job: Job) -> Job:
 
     if choice:
         atype, eid, summary = choice
-        job.assigned_type = atype
-        job.status = "assigned"
+        locked_job.assigned_type = atype
+        locked_job.status = "assigned"
         if atype == "mechanic":
-            job.assigned_mechanic_id = eid
-            job.assigned_garage_id = None
+            locked_job.assigned_mechanic_id = eid
+            locked_job.assigned_garage_id = None
             r = await db.execute(select(Mechanic).where(Mechanic.id == eid))
             m = r.scalar_one_or_none()
             if m:
-                await push_location_update(str(job.user_id), str(job.id), [m.lat, m.lon])
+                await push_location_update(str(locked_job.user_id), str(locked_job.id), [m.lat, m.lon])
         else:
-            job.assigned_garage_id = eid
-            job.assigned_mechanic_id = None
+            locked_job.assigned_garage_id = eid
+            locked_job.assigned_mechanic_id = None
             r = await db.execute(select(Garage).where(Garage.id == eid))
             g = r.scalar_one_or_none()
             if g:
-                await push_location_update(str(job.user_id), str(job.id), [g.lat, g.lon])
-        await push_status_update(str(job.user_id), str(job.id), "assigned", summary)
+                await push_location_update(str(locked_job.user_id), str(locked_job.id), [g.lat, g.lon])
+        await push_status_update(str(locked_job.user_id), str(locked_job.id), "assigned", summary)
     else:
-        job.status = "searching"
+        locked_job.status = "searching"
 
     await db.flush()
+    # Sync the original reference so callers see updated values
+    job.status = locked_job.status
+    job.assigned_type = locked_job.assigned_type
+    job.assigned_mechanic_id = locked_job.assigned_mechanic_id
+    job.assigned_garage_id = locked_job.assigned_garage_id
     return job
 
 
@@ -157,6 +189,7 @@ async def create_service_request(db: AsyncSession, user: User, data: dict[str, A
         customer_lon=float(lon),
         price_estimate=data.get("priceEstimate"),
         media_url=data.get("mediaUrl"),
+        vehicle_id=data.get("vehicleId"),
     )
     db.add(job)
     await db.flush()
@@ -203,12 +236,24 @@ async def get_job_for_user(db: AsyncSession, job_id: UUID, user: User) -> Job | 
     return None
 
 
+class InvalidTransitionError(Exception):
+    """Raised when a status transition is not allowed."""
+
+    def __init__(self, current: str, target: str):
+        self.current = current
+        self.target = target
+        super().__init__(f"Cannot transition from '{current}' to '{target}'")
+
+
 async def patch_job_status(
     db: AsyncSession,
     job: Job,
     status: str,
     mechanic_id: UUID | None,
 ) -> dict[str, Any]:
+    if not _validate_transition(job.status, status):
+        raise InvalidTransitionError(job.status, status)
+
     job.status = status
     if mechanic_id and job.assigned_mechanic_id != mechanic_id:
         job.assigned_mechanic_id = mechanic_id
@@ -219,6 +264,39 @@ async def patch_job_status(
         r = await db.execute(select(Mechanic).where(Mechanic.id == job.assigned_mechanic_id))
         mech_summary = assignee_summary(job, r.scalar_one_or_none())
     await push_status_update(str(job.user_id), str(job.id), status, mech_summary)
+    
+    from app.models.notification import Notification
+    titles = {
+        "assigned": "Job Assigned",
+        "en_route": "Mechanic En Route",
+        "in_progress": "Job In Progress",
+        "completed": "Job Completed",
+        "cancelled": "Job Cancelled"
+    }
+    bodies = {
+        "assigned": "A mechanic has been assigned to your service request.",
+        "en_route": "The mechanic is on their way to your location.",
+        "in_progress": "The mechanic has started working on your vehicle.",
+        "completed": "Your service request is complete.",
+        "cancelled": "Your service request was cancelled."
+    }
+    if status in titles:
+        notif = Notification(
+            user_id=job.user_id,
+            title=titles[status],
+            body=bodies[status],
+            type="job_update",
+            job_id=job.id
+        )
+        db.add(notif)
+        await db.flush()
+        
+        # update unread count
+        from sqlalchemy import func, select
+        c = await db.execute(select(func.count(Notification.id)).where(Notification.user_id == job.user_id, Notification.read == False))
+        from app.ws.manager import manager
+        await manager.send_json_to_user(str(job.user_id), {"type": "NOTIFICATION_UPDATE", "payload": {"unreadCount": c.scalar() or 0}})
+    
     if job.assigned_mechanic_id:
         r = await db.execute(select(Mechanic).where(Mechanic.id == job.assigned_mechanic_id))
         m = r.scalar_one_or_none()
@@ -233,6 +311,11 @@ async def complete_job_with_payment(
     payment: dict[str, Any],
 ) -> dict[str, Any]:
     from app.models.payment import Payment
+
+    if job.status == "completed":
+        return job_response_dict(job, None)
+    if job.status == "cancelled":
+        raise InvalidTransitionError("cancelled", "completed")
 
     job.status = "completed"
     amt = payment.get("amount") or (job.price_estimate or {}).get("min") or 0
@@ -251,6 +334,8 @@ async def complete_job_with_payment(
 
 
 async def cancel_job(db: AsyncSession, job: Job) -> None:
+    if job.status in ("completed", "cancelled"):
+        return  # Idempotent — already in terminal state
     job.status = "cancelled"
     await db.flush()
     await push_status_update(str(job.user_id), str(job.id), "cancelled", None)

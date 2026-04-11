@@ -47,6 +47,14 @@ async def create_review(body: ReviewCreate, db: DbSession, user: CurrentUser):
     if job.status != "completed":
         raise HTTPException(status_code=400, detail="Job must be completed before review")
 
+    # Prevent duplicate reviews
+    existing_review = await db.execute(select(Review).where(
+        Review.job_id == body.job_id,
+        Review.reviewer_user_id == user.id,
+    ))
+    if existing_review.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="You have already reviewed this job")
+
     target_type = job.assigned_type or "mechanic"
     tm, tg = None, None
     if target_type == "mechanic" and job.assigned_mechanic_id:
