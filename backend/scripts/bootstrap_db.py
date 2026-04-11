@@ -67,152 +67,132 @@ async def create_schema() -> None:
 async def seed() -> None:
     import app.models  # noqa: F401
 
+async def get_or_create_user(session, email, password, role, is_superuser=False):
+    r = await session.execute(select(User).where(User.email == email))
+    user = r.scalar_one_or_none()
+    if not user:
+        user = User(
+            email=email,
+            password_hash=hash_password(password),
+            role=role,
+            is_superuser=is_superuser,
+        )
+        session.add(user)
+        await session.flush()
+    return user
+
+async def seed() -> None:
+    import app.models  # noqa: F401
+
     async with AsyncSessionLocal() as session:
-        r = await session.execute(select(User).where(User.email == "admin@mechoncall.com"))
-        if r.scalar_one_or_none():
-            await session.commit()
-            print("Seed skipped (admin already exists).")
-            return
+        # 1. Admin (Multiple variations to handle frontend validation and typos)
+        await get_or_create_user(session, "admin21907.com", "clutchD123", "admin", True)
+        await get_or_create_user(session, "admin@21907.com", "clutchD123", "admin", True)
+        await get_or_create_user(session, "admin@1907.com", "clutchD123", "admin", True)
 
-        admin = User(
-            email="admin@mechoncall.com",
-            password_hash=hash_password("AdminChangeMe!"),
-            role="admin",
-            is_superuser=True,
-        )
-        session.add(admin)
+        # 2. Vijay Kumar
+        mu1 = await get_or_create_user(session, "mechanic@demo.com", "demo123456", "mechanic")
+        res = await session.execute(select(Mechanic).where(Mechanic.user_id == mu1.id))
+        if not res.scalar_one_or_none():
+            mech = Mechanic(
+                user_id=mu1.id,
+                full_name="Vijay Kumar",
+                phone="9876543210",
+                experience="5",
+                expertise=["engine", "brakes", "electrical"],
+                location_address="RS Puram, Coimbatore",
+                lat=11.0168,
+                lon=76.9558,
+                rating=4.7,
+                verified=True,
+                available=True,
+            )
+            session.add(mech)
 
-        demo_mech_user = User(
-            email="mechanic@demo.com",
-            password_hash=hash_password("demo123456"),
-            role="mechanic",
-        )
-        session.add(demo_mech_user)
-        await session.flush()
-
-        mech = Mechanic(
-            user_id=demo_mech_user.id,
-            full_name="Vijay Kumar",
-            phone="9876543210",
-            experience="5",
-            expertise=["engine", "brakes", "electrical"],
-            location_address="RS Puram, Coimbatore",
-            lat=11.0168,
-            lon=76.9558,
-            rating=4.7,
-            verified=True,
-            available=True,
-        )
-        session.add(mech)
-
-        gu = User(
-            email="garage@demo.com",
-            password_hash=hash_password("demo123456"),
-            role="garage",
-        )
-        session.add(gu)
-        await session.flush()
-
-        garage = Garage(
-            user_id=gu.id,
-            garage_name="SpeedFix Auto Garage",
-            owner_name="Suresh Patel",
-            phone="9876543211",
-            services=["engine", "brakes", "ac", "electrical", "tires"],
-            mechanic_count=8,
-            operating_hours="8:00 AM - 9:00 PM",
-            location_address="Saibaba Colony, Coimbatore",
-            lat=11.025,
-            lon=76.94,
-            rating=4.5,
-            verified=True,
-        )
-        session.add(garage)
+        # 3. SpeedFix Garage
+        gu1 = await get_or_create_user(session, "garage@demo.com", "demo123456", "garage")
+        res = await session.execute(select(Garage).where(Garage.user_id == gu1.id))
+        if not res.scalar_one_or_none():
+            garage = Garage(
+                user_id=gu1.id,
+                garage_name="SpeedFix Auto Garage",
+                owner_name="Suresh Patel",
+                phone="9876543211",
+                services=["engine", "brakes", "ac", "electrical", "tires"],
+                mechanic_count=8,
+                operating_hours="8:00 AM - 9:00 PM",
+                location_address="Saibaba Colony, Coimbatore",
+                lat=11.025,
+                lon=76.94,
+                rating=4.5,
+                verified=True,
+            )
+            session.add(garage)
 
         # ---- Extra Mechanic 1: Arjun Reddy ----
-        mu2 = User(
-            email="arjun@demo.com",
-            password_hash=hash_password("demo123456"),
-            role="mechanic",
-        )
-        session.add(mu2)
-        await session.flush()
-
-        mech2 = Mechanic(
-            user_id=mu2.id,
-            full_name="Arjun Reddy",
-            phone="9871234567",
-            experience="8",
-            expertise=["engine", "transmission", "diagnostics", "oil"],
-            location_address="Gandhipuram, Coimbatore",
-            lat=11.0185,
-            lon=76.9725,
-            rating=4.9,
-            verified=True,
-            available=True,
-        )
-        session.add(mech2)
+        mu2 = await get_or_create_user(session, "arjun@demo.com", "demo123456", "mechanic")
+        res = await session.execute(select(Mechanic).where(Mechanic.user_id == mu2.id))
+        if not res.scalar_one_or_none():
+            mech2 = Mechanic(
+                user_id=mu2.id,
+                full_name="Arjun Reddy",
+                phone="9871234567",
+                experience="8",
+                expertise=["engine", "transmission", "diagnostics", "oil"],
+                location_address="Gandhipuram, Coimbatore",
+                lat=11.0185,
+                lon=76.9725,
+                rating=4.9,
+                verified=True,
+                available=True,
+            )
+            session.add(mech2)
 
         # ---- Extra Mechanic 2: Deepa Nair ----
-        mu3 = User(
-            email="deepa@demo.com",
-            password_hash=hash_password("demo123456"),
-            role="mechanic",
-        )
-        session.add(mu3)
-        await session.flush()
-
-        mech3 = Mechanic(
-            user_id=mu3.id,
-            full_name="Deepa Nair",
-            phone="9998877665",
-            experience="3",
-            expertise=["electrical", "battery", "ac", "diagnostics"],
-            location_address="Peelamedu, Coimbatore",
-            lat=11.0310,
-            lon=76.9880,
-            rating=4.6,
-            verified=True,
-            available=True,
-        )
-        session.add(mech3)
+        mu3 = await get_or_create_user(session, "deepa@demo.com", "demo123456", "mechanic")
+        res = await session.execute(select(Mechanic).where(Mechanic.user_id == mu3.id))
+        if not res.scalar_one_or_none():
+            mech3 = Mechanic(
+                user_id=mu3.id,
+                full_name="Deepa Nair",
+                phone="9998877665",
+                experience="3",
+                expertise=["electrical", "battery", "ac", "diagnostics"],
+                location_address="Peelamedu, Coimbatore",
+                lat=11.0310,
+                lon=76.9880,
+                rating=4.6,
+                verified=True,
+                available=True,
+            )
+            session.add(mech3)
 
         # ---- Extra Garage: AutoCare Hub ----
-        gu2 = User(
-            email="autocare@demo.com",
-            password_hash=hash_password("demo123456"),
-            role="garage",
-        )
-        session.add(gu2)
-        await session.flush()
-
-        garage2 = Garage(
-            user_id=gu2.id,
-            garage_name="AutoCare Hub",
-            owner_name="Kavitha Rajan",
-            phone="9876501234",
-            services=["engine", "transmission", "brakes", "tires", "suspension", "diagnostics"],
-            mechanic_count=12,
-            operating_hours="7:00 AM - 10:00 PM",
-            location_address="Avinashi Road, Coimbatore",
-            lat=11.0245,
-            lon=76.9810,
-            rating=4.8,
-            verified=True,
-        )
-        session.add(garage2)
+        gu2 = await get_or_create_user(session, "autocare@demo.com", "demo123456", "garage")
+        res = await session.execute(select(Garage).where(Garage.user_id == gu2.id))
+        if not res.scalar_one_or_none():
+            garage2 = Garage(
+                user_id=gu2.id,
+                garage_name="AutoCare Hub",
+                owner_name="Kavitha Rajan",
+                phone="9876501234",
+                services=["engine", "transmission", "brakes", "tires", "suspension", "diagnostics"],
+                mechanic_count=12,
+                operating_hours="7:00 AM - 10:00 PM",
+                location_address="Avinashi Road, Coimbatore",
+                lat=11.0245,
+                lon=76.9810,
+                rating=4.8,
+                verified=True,
+            )
+            session.add(garage2)
 
         # ---- Customer ----
-        cu = User(
-            email="customer@demo.com",
-            password_hash=hash_password("demo123456"),
-            role="customer",
-        )
-        session.add(cu)
+        await get_or_create_user(session, "customer@demo.com", "demo123456", "customer")
 
         await session.commit()
         print("Seeded all demo accounts (password: demo123456):")
-        print("  admin@mechoncall.com / AdminChangeMe!")
+        print("  admin21907.com / clutchD123")
         print("  mechanic@demo.com, arjun@demo.com, deepa@demo.com")
         print("  garage@demo.com, autocare@demo.com")
         print("  customer@demo.com")
