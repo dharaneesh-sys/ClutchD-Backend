@@ -323,8 +323,6 @@ async def complete_job_with_payment(
 ) -> dict[str, Any]:
     from app.models.payment import Payment
 
-    if job.status == "completed":
-        return job_response_dict(job, None)
     if job.status == "cancelled":
         raise InvalidTransitionError("cancelled", "completed")
 

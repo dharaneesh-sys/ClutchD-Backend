@@ -33,3 +33,4 @@ email-validator==2.2.0
 
 # Geocoding (optional signup)
 # Nominatim via httpx — no extra package
+reportlab==4.1.0

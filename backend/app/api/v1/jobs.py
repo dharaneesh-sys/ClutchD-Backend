@@ -178,7 +178,21 @@ async def get_history(
         )
 
     jobs = r.scalars().all()
-    return {"jobs": [job_service.job_response_dict(j) for j in jobs]}
+    
+    from app.models.payment import Payment
+    job_ids = [j.id for j in jobs]
+    paid_job_ids = set()
+    if job_ids:
+        pay_r = await db.execute(select(Payment.job_id).where(Payment.job_id.in_(job_ids)))
+        paid_job_ids = set(pay_r.scalars().all())
+
+    res = []
+    for j in jobs:
+        d = job_service.job_response_dict(j)
+        d["isPaid"] = j.id in paid_job_ids
+        res.append(d)
+        
+    return {"jobs": res}
 
 
 @router.get("/history/{job_id}/invoice")
@@ -217,11 +231,23 @@ async def get_invoice(job_id: UUID, db: DbSession, user: CurrentUser):
     c.drawString(50, 580, f"Description: {job.description[:100]}...")
     
     c.setFont("Helvetica-Bold", 18)
-    # Estimate from Job price since actual payment might be elsewhere to simplify
+    
+    from app.models.payment import Payment
+    from sqlalchemy import select
+    pay_r = await db.execute(select(Payment).where(Payment.job_id == job.id).order_by(Payment.created_at.desc()).limit(1))
+    payment = pay_r.scalar_one_or_none()
+    
     amount = 0
-    if job.price_estimate:
+    method = "Unknown"
+    if payment:
+        amount = payment.amount if payment.amount else 0
+        method = payment.method or payment.provider or "Cash/UPI"
+    elif job.price_estimate:
         amount = job.price_estimate.get("min", 0)
+        
     c.drawString(50, 530, f"Total Paid: INR {amount}")
+    c.setFont("Helvetica", 12)
+    c.drawString(50, 510, f"Payment Method: {method.upper()}")
     
     c.setFont("Helvetica-Oblique", 10)
     c.drawString(50, 50, "Thank you for using ClutchD On-Demand Mechanic Service.")
