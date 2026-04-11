@@ -35,6 +35,9 @@ async def patch_request_status(
         return await job_service.patch_job_status(db, job, body.status, mid)
     except InvalidTransitionError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except Exception as e:
+        import traceback
+        raise HTTPException(status_code=500, detail=traceback.format_exc())
 
 
 @router.post("/request/{job_id}/complete")

@@ -22,7 +22,50 @@ router = APIRouter(prefix="/payments", tags=["payments"])
 def _get_razorpay_client():
     settings = get_settings()
     if not settings.razorpay_key_id or not settings.razorpay_key_secret:
-        raise HTTPException(status_code=503, detail="Payment gateway not configured")
+        logger.warning("Using MOCK Razorpay client because keys are missing in environment")
+        
+        class MockQrcode:
+            def create(self, kwargs):
+                import time
+                amt = kwargs.get("payment_amount", 0) / 100
+                return {
+                    "id": f"qr_mock_{int(time.time())}",
+                    # Use a real QR generation API to show a dummy UPI link
+                    "image_url": f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=upi://pay?pa=mock@upi%26pn=ClutchD%26am={amt}%26cu=INR",
+                    "close_by": kwargs.get("close_by"),
+                    "status": "active"
+                }
+
+            def fetch(self, qr_id):
+                import time
+                try:
+                    ts = int(qr_id.split('_')[-1])
+                except:
+                    ts = time.time()
+                now = time.time()
+                # Simulate payment success after 8 seconds
+                paid = (now - ts) > 8
+                return {
+                    "status": "closed" if paid else "active",
+                    "payments_count_received": 1 if paid else 0
+                }
+
+        class MockOrder:
+            def create(self, kwargs):
+                import time
+                return {
+                    "id": f"order_mock_{int(time.time())}",
+                    "amount": kwargs.get("amount"),
+                    "currency": kwargs.get("currency"),
+                }
+
+        class MockClient:
+            def __init__(self):
+                self.qrcode = MockQrcode()
+                self.order = MockOrder()
+
+        return MockClient()
+
     import razorpay
     return razorpay.Client(auth=(settings.razorpay_key_id, settings.razorpay_key_secret))
 

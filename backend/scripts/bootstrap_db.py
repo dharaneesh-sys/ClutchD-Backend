@@ -68,17 +68,22 @@ async def seed() -> None:
     import app.models  # noqa: F401
 
 async def get_or_create_user(session, email, password, role, is_superuser=False):
+    from sqlalchemy.exc import IntegrityError
     r = await session.execute(select(User).where(User.email == email))
     user = r.scalar_one_or_none()
     if not user:
-        user = User(
-            email=email,
-            password_hash=hash_password(password),
-            role=role,
-            is_superuser=is_superuser,
-        )
-        session.add(user)
-        await session.flush()
+        try:
+            async with session.begin_nested():
+                user = User(
+                    email=email,
+                    password_hash=hash_password(password),
+                    role=role,
+                    is_superuser=is_superuser,
+                )
+                session.add(user)
+        except IntegrityError:
+            r = await session.execute(select(User).where(User.email == email))
+            user = r.scalar_one_or_none()
     return user
 
 async def seed() -> None:

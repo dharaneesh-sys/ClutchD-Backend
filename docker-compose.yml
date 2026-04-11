@@ -31,9 +31,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://mechoncall:mechoncall@db:5432/mechoncall
       SYNC_DATABASE_URL: postgresql://mechoncall:mechoncall@db:5432/mechoncall
       REDIS_URL: redis://redis:6379/0
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-change-me-use-openssl-rand-hex-32}
-      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
-      DEV_AUTO_VERIFY_PROVIDERS: "true"
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-950f7a372d6647e83034d1a92325cf5d62f78702ecee0d9f2335036a030011cf}
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,https://clutchd.com,https://api.clutchd.com
+      DEV_AUTO_VERIFY_PROVIDERS: "false"
     depends_on:
       db:
         condition: service_healthy
@@ -47,7 +47,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://mechoncall:mechoncall@db:5432/mechoncall
       REDIS_URL: redis://redis:6379/0
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-change-me-use-openssl-rand-hex-32}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-950f7a372d6647e83034d1a92325cf5d62f78702ecee0d9f2335036a030011cf}
     command: celery -A app.tasks.worker.celery_app worker --loglevel=info
     depends_on:
       db:

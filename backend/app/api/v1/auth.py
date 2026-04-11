@@ -20,11 +20,17 @@ from app.schemas.auth import (
     MessageResponse,
     SignupPayload,
     TokenResponse,
+    ForgotPasswordRequest,
+    PasswordResetRequest,
 )
 from app.services import auth_service
 from app.services.auth_service import AuthError
 from app.services.user_payload import user_to_frontend_dict
 from app.api.v1.token import set_refresh_cookie, clear_refresh_cookie
+from app.core.redis_client import get_redis
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -180,3 +186,57 @@ async def oauth_google(request: Request, body: GoogleOAuthRequest, db: DbSession
     response = JSONResponse(content=TokenResponse(token=token, user=payload).model_dump())
     set_refresh_cookie(response, refresh)
     return response
+
+
+@router.post("/forgot-password/request", response_model=MessageResponse)
+@limiter.limit("5/minute")
+async def forgot_password_request(request: Request, body: ForgotPasswordRequest, db: DbSession):
+    from sqlalchemy import select
+    res = await db.execute(select(User).where(User.email == body.email.lower()))
+    user = res.scalar_one_or_none()
+    if not user:
+        # Don't reveal if user exists or not, just return success
+        return MessageResponse(message="If an account with that email exists, a password reset code has been generated.")
+
+    # Generate 6-digit pin
+    import random
+    code = f"{random.randint(0, 999999):06d}"
+    
+    # Save to Redis with 10 min (600s) expiry
+    r = await get_redis()
+    await r.setex(f"reset:{user.email.lower()}", 600, code)
+    
+    # LOG the code instead of sending an email for local testing
+    logger.warning("=====================================================")
+    logger.warning(f"PASSWORD RESET REQUESTED FOR {user.email}")
+    logger.warning(f"YOUR 6-DIGIT CODE IS: {code}")
+    logger.warning("=====================================================")
+    
+    return MessageResponse(message="If an account with that email exists, a password reset code has been generated.")
+
+
+@router.post("/forgot-password/reset", response_model=MessageResponse)
+@limiter.limit("5/minute")
+async def forgot_password_reset(request: Request, body: PasswordResetRequest, db: DbSession):
+    from sqlalchemy import select
+    email = body.email.lower()
+    
+    r = await get_redis()
+    stored_code = await r.get(f"reset:{email}")
+    
+    if not stored_code or stored_code != body.code:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+        
+    res = await db.execute(select(User).where(User.email == email))
+    user = res.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    # Update password
+    user.password_hash = hash_password(body.newPassword)
+    await db.flush()
+    
+    # Delete the code
+    await r.delete(f"reset:{email}")
+    
+    return MessageResponse(message="Password has been successfully updated.")

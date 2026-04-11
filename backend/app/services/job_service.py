@@ -16,7 +16,7 @@ from app.ws.manager import push_location_update, push_status_update
 VALID_TRANSITIONS: dict[str, set[str]] = {
     "searching": {"assigned", "cancelled"},
     "assigned": {"en_route", "cancelled"},
-    "en_route": {"in_progress", "cancelled"},
+    "en_route": {"in_progress", "completed", "cancelled"},
     "in_progress": {"completed", "cancelled"},
     "completed": set(),   # terminal
     "cancelled": set(),   # terminal
@@ -40,6 +40,10 @@ def job_response_dict(job: Job, mechanic_summary: dict | None = None) -> dict[st
         "priceEstimate": job.price_estimate,
         "vehicleId": str(job.vehicle_id) if job.vehicle_id else None,
         "mechanic": mechanic_summary,
+        "customerLocation": {
+            "lat": job.customer_lat,
+            "lng": job.customer_lon,
+        } if job.customer_lat else None,
     }
 
 
@@ -153,20 +157,27 @@ async def assign_job_auto(db: AsyncSession, job: Job) -> Job:
 def assignee_summary(job: Job, db_row: Mechanic | Garage | None) -> dict | None:
     if not db_row:
         return None
+    
+    dist_str = "Unknown distance"
+    if db_row.lat is not None and db_row.lon is not None:
+        try:
+            dist = matching.haversine_m(job.customer_lat, job.customer_lon, db_row.lat, db_row.lon)
+            dist_str = f"{dist/1000:.1f} km"
+        except Exception:
+            pass
+
     if isinstance(db_row, Mechanic):
-        dist = matching.haversine_m(job.customer_lat, job.customer_lon, db_row.lat, db_row.lon)
         return {
             "id": str(db_row.id),
             "name": db_row.full_name,
             "rating": db_row.rating,
-            "distance": f"{dist/1000:.1f} km",
+            "distance": dist_str,
         }
-    dist = matching.haversine_m(job.customer_lat, job.customer_lon, db_row.lat, db_row.lon)
     return {
         "id": str(db_row.id),
         "name": db_row.garage_name,
         "rating": db_row.rating,
-        "distance": f"{dist/1000:.1f} km",
+        "distance": dist_str,
     }
 
 
@@ -292,7 +303,7 @@ async def patch_job_status(
         await db.flush()
         
         # update unread count
-        from sqlalchemy import func, select
+        from sqlalchemy import func
         c = await db.execute(select(func.count(Notification.id)).where(Notification.user_id == job.user_id, Notification.read == False))
         from app.ws.manager import manager
         await manager.send_json_to_user(str(job.user_id), {"type": "NOTIFICATION_UPDATE", "payload": {"unreadCount": c.scalar() or 0}})

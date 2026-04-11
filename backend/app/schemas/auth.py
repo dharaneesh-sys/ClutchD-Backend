@@ -106,3 +106,13 @@ class ProfileUpdateRequest(BaseModel):
     mechanicCount: int | None = Field(None, ge=0, le=999)
     latitude: float | None = Field(None, ge=-90, le=90)
     longitude: float | None = Field(None, ge=-180, le=180)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=6, max_length=6)
+    newPassword: str = Field(min_length=6, max_length=128)
