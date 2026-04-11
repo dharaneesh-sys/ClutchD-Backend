@@ -1,0 +1,59 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: mechoncall
+      POSTGRES_PASSWORD: mechoncall
+      POSTGRES_DB: mechoncall
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mechoncall -d mechoncall"]
+      interval: 3s
+      timeout: 5s
+      retries: 15
+      start_period: 45s
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://mechoncall:mechoncall@db:5432/mechoncall
+      SYNC_DATABASE_URL: postgresql://mechoncall:mechoncall@db:5432/mechoncall
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-change-me-use-openssl-rand-hex-32}
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      DEV_AUTO_VERIFY_PROVIDERS: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    environment:
+      DATABASE_URL: postgresql+asyncpg://mechoncall:mechoncall@db:5432/mechoncall
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-change-me-use-openssl-rand-hex-32}
+    command: celery -A app.tasks.worker.celery_app worker --loglevel=info
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  pgdata:
