@@ -44,6 +44,7 @@ class ProfileUpdateBody(BaseModel):
     mechanicCount: int | None = Field(None, ge=0, le=999)
     latitude: float | None = Field(None, ge=-90, le=90)
     longitude: float | None = Field(None, ge=-180, le=180)
+    upiId: str | None = Field(None, max_length=128, pattern=r"^[\w\.\-_]+@[\w\.\-_]+$")
 
 
 @router.patch("/profile")
@@ -65,6 +66,8 @@ async def update_profile(body: ProfileUpdateBody, db: DbSession, user: CurrentUs
             mech.lat = body.latitude
         if body.longitude is not None:
             mech.lon = body.longitude
+        if body.upiId is not None:
+            mech.upi_id = body.upiId
         await db.flush()
 
     elif user.role == UserRole.garage.value:
@@ -90,6 +93,8 @@ async def update_profile(body: ProfileUpdateBody, db: DbSession, user: CurrentUs
             garage.lat = body.latitude
         if body.longitude is not None:
             garage.lon = body.longitude
+        if body.upiId is not None:
+            garage.upi_id = body.upiId
         await db.flush()
     else:
         raise HTTPException(status_code=403, detail="Only mechanics and garages can update profiles")

@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 celery_app = Celery(
-    "mechoncall",
+    "clutchd",
     broker=settings.celery_broker,
     backend=settings.celery_backend,
 )

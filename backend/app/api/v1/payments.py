@@ -171,8 +171,14 @@ async def payment_verify(body: PaymentVerifyRequest, db: DbSession, user: Curren
     job = jr.scalar_one_or_none()
     if job and job.status != "completed":
         job.status = "completed"
-
+        
     await db.flush()
+    
+    # Trigger payout logic
+    if job:
+        from app.services.payout_service import process_payouts
+        await process_payouts(db, pmt, job)
+        
     return {"ok": True, "status": "captured"}
 
 
@@ -227,6 +233,11 @@ async def payment_webhook(request: Request, db: DbSession):
         if job and job.status != "completed":
             job.status = "completed"
         await db.flush()
+        
+        # Trigger payout logic
+        if job:
+            from app.services.payout_service import process_payouts
+            await process_payouts(db, pmt, job)
 
     elif event == "payment.failed" and pmt.status == "pending":
         pmt.status = "failed"

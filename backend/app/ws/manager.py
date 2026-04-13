@@ -69,8 +69,12 @@ async def push_status_update(
     job_id: str | None,
     status: str,
     mechanic: dict | None = None,
+    pricing: dict | None = None,
 ) -> None:
-    msg = {"type": "STATUS_UPDATE", "payload": {"status": status, "mechanic": mechanic}}
+    payload = {"status": status, "mechanic": mechanic}
+    if pricing is not None:
+        payload["pricing"] = pricing
+    msg = {"type": "STATUS_UPDATE", "payload": payload}
     await manager.send_json_to_user(customer_user_id, msg)
     if job_id:
         await manager.broadcast_job(job_id, msg)

@@ -17,7 +17,8 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     "searching": {"assigned", "cancelled"},
     "assigned": {"en_route", "cancelled"},
     "en_route": {"in_progress", "completed", "cancelled"},
-    "in_progress": {"completed", "cancelled"},
+    "in_progress": {"payment_pending", "completed", "cancelled"},
+    "payment_pending": {"completed", "cancelled"},
     "completed": set(),   # terminal
     "cancelled": set(),   # terminal
 }
@@ -30,6 +31,19 @@ def _validate_transition(current: str, target: str) -> bool:
 
 
 def job_response_dict(job: Job, mechanic_summary: dict | None = None) -> dict[str, Any]:
+    pricing = None
+    if job.total_amount is not None:
+        pricing = {
+            "serviceAmount": job.service_amount,
+            "convenienceFee": job.convenience_fee,
+            "cancellationFee": job.cancellation_fee,
+            "distanceKm": job.distance_km,
+            "distanceFee": job.distance_fee,
+            "gstAmount": job.gst_amount,
+            "totalAmount": job.total_amount,
+            "providerUpiId": job.provider_upi_id,
+            "platformUpiId": "amdevanand206@oksbi",
+        }
     return {
         "id": str(job.id),
         "issueTag": job.issue_tag,
@@ -44,6 +58,7 @@ def job_response_dict(job: Job, mechanic_summary: dict | None = None) -> dict[st
             "lat": job.customer_lat,
             "lng": job.customer_lon,
         } if job.customer_lat else None,
+        "pricing": pricing,
     }
 
 
@@ -316,29 +331,133 @@ async def patch_job_status(
     return job_response_dict(job, mech_summary)
 
 
+# ---- Fee constants -------------------------------------------------------
+CONVENIENCE_FEE = 40.0
+CANCELLATION_FEE = 30.0
+DAY_RATE_PER_KM = 1.0
+NIGHT_RATE_PER_KM = 2.0  # after 8 PM
+GST_RATE = 0.18
+PLATFORM_UPI = "amdevanand206@oksbi"
+
+
+async def finalize_job_price(
+    db: AsyncSession,
+    job: Job,
+    service_amount: float,
+) -> dict[str, Any]:
+    """Called by mechanic/garage after completing the work.
+    Calculates all fees, sets status to payment_pending, and returns the
+    full pricing breakdown.
+    """
+    from datetime import datetime, timezone
+
+    if job.status not in ("in_progress", "en_route"):
+        raise InvalidTransitionError(job.status, "payment_pending")
+
+    # ---- Distance calculation -----------------------------------------
+    provider_lat: float | None = None
+    provider_lon: float | None = None
+
+    if job.assigned_mechanic_id:
+        r = await db.execute(select(Mechanic).where(Mechanic.id == job.assigned_mechanic_id))
+        provider = r.scalar_one_or_none()
+        if provider:
+            provider_lat, provider_lon = provider.lat, provider.lon
+            job.provider_upi_id = provider.upi_id
+    elif job.assigned_garage_id:
+        r = await db.execute(select(Garage).where(Garage.id == job.assigned_garage_id))
+        provider = r.scalar_one_or_none()
+        if provider:
+            provider_lat, provider_lon = provider.lat, provider.lon
+            job.provider_upi_id = provider.upi_id
+
+    distance_km = 0.0
+    if provider_lat is not None and job.customer_lat is not None:
+        distance_m = matching.haversine_m(job.customer_lat, job.customer_lon, provider_lat, provider_lon)
+        distance_km = round(distance_m / 1000, 2)
+
+    # ---- Night-time check (after 8 PM IST) ----------------------------
+    from datetime import timedelta
+    ist = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(ist)
+    is_night = now_ist.hour >= 20 or now_ist.hour < 6
+    rate_per_km = NIGHT_RATE_PER_KM if is_night else DAY_RATE_PER_KM
+    distance_fee = round(distance_km * rate_per_km, 2)
+
+    # ---- Calculate totals ---------------------------------------------
+    subtotal = service_amount + CONVENIENCE_FEE + CANCELLATION_FEE + distance_fee
+    gst_amount = round(subtotal * GST_RATE, 2)
+    total_amount = round(subtotal + gst_amount, 2)
+
+    # ---- Persist -------------------------------------------------------
+    job.service_amount = service_amount
+    job.convenience_fee = CONVENIENCE_FEE
+    job.cancellation_fee = CANCELLATION_FEE
+    job.distance_km = distance_km
+    job.distance_fee = distance_fee
+    job.gst_amount = gst_amount
+    job.total_amount = total_amount
+    job.status = "payment_pending"
+    await db.flush()
+
+    # Push update to customer
+    mech_summary = None
+    if job.assigned_mechanic_id:
+        r = await db.execute(select(Mechanic).where(Mechanic.id == job.assigned_mechanic_id))
+        mech_summary = assignee_summary(job, r.scalar_one_or_none())
+    elif job.assigned_garage_id:
+        r = await db.execute(select(Garage).where(Garage.id == job.assigned_garage_id))
+        mech_summary = assignee_summary(job, r.scalar_one_or_none())
+
+    pricing_ws = {
+        "serviceAmount": service_amount,
+        "convenienceFee": CONVENIENCE_FEE,
+        "cancellationFee": CANCELLATION_FEE,
+        "distanceKm": distance_km,
+        "distanceFee": distance_fee,
+        "gstAmount": gst_amount,
+        "totalAmount": total_amount,
+        "providerUpiId": job.provider_upi_id,
+        "platformUpiId": PLATFORM_UPI,
+    }
+    await push_status_update(str(job.user_id), str(job.id), "payment_pending", mech_summary, pricing_ws)
+
+    # Notification for customer
+    from app.models.notification import Notification
+    notif = Notification(
+        user_id=job.user_id,
+        title="Invoice Ready",
+        body=f"Your service bill of \u20b9{total_amount:.0f} is ready for payment.",
+        type="job_update",
+        job_id=job.id,
+    )
+    db.add(notif)
+    await db.flush()
+
+    from sqlalchemy import func as sa_func
+    from app.models.notification import Notification as N
+    c = await db.execute(select(sa_func.count(N.id)).where(N.user_id == job.user_id, N.read == False))
+    from app.ws.manager import manager
+    await manager.send_json_to_user(str(job.user_id), {"type": "NOTIFICATION_UPDATE", "payload": {"unreadCount": c.scalar() or 0}})
+
+    return job_response_dict(job, mech_summary)
+
+
 async def complete_job_with_payment(
     db: AsyncSession,
     job: Job,
     payment: dict[str, Any],
 ) -> dict[str, Any]:
-    from app.models.payment import Payment
-
+    # We no longer insert duplicate 'manual' Payment records here since 
+    # payments.py explicitly records 'razorpay', 'cash', and 'qr' records natively.
     if job.status == "cancelled":
         raise InvalidTransitionError("cancelled", "completed")
 
-    job.status = "completed"
-    amt = payment.get("amount") or (job.price_estimate or {}).get("min") or 0
-    pay = Payment(
-        job_id=job.id,
-        provider="manual",
-        external_id=payment.get("transactionId"),
-        amount=float(amt),
-        status="succeeded" if payment.get("status") == "success" else "pending",
-        raw_payload=payment,
-    )
-    db.add(pay)
-    await db.flush()
-    await push_status_update(str(job.user_id), str(job.id), "completed", None)
+    if job.status != "completed":
+        job.status = "completed"
+        await db.flush()
+        await push_status_update(str(job.user_id), str(job.id), "completed", None)
+
     return job_response_dict(job, None)
 
 

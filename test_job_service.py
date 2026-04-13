@@ -4,8 +4,8 @@ import sys
 
 # Setup environment to load the app
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), ".")))
-os.environ["DATABASE_URL"] = "postgresql+asyncpg://mechoncall:mechoncall@localhost:5432/mechoncall"
-os.environ["SYNC_DATABASE_URL"] = "postgresql://mechoncall:mechoncall@localhost:5432/mechoncall"
+os.environ["DATABASE_URL"] = "postgresql+asyncpg://clutchd:clutchd@localhost:5432/clutchd"
+os.environ["SYNC_DATABASE_URL"] = "postgresql://clutchd:clutchd@localhost:5432/clutchd"
 os.environ["REDIS_URL"] = "redis://localhost:6379/0"
 
 from app.db.session import AsyncSessionLocal

@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, DbSession
 from app.models.enums import UserRole
 from pydantic import BaseModel
-from app.schemas.job import PaymentCompleteBody, ServiceRequestCreate, ServiceRequestStatusUpdate
+from app.schemas.job import FinalizePriceBody, PaymentCompleteBody, ServiceRequestCreate, ServiceRequestStatusUpdate
 from app.services import job_service
 from app.services.job_service import InvalidTransitionError
 
@@ -38,6 +38,26 @@ async def patch_request_status(
     except Exception as e:
         import traceback
         raise HTTPException(status_code=500, detail=traceback.format_exc())
+
+
+@router.post("/request/{job_id}/finalize-price")
+async def finalize_price(
+    job_id: UUID,
+    body: FinalizePriceBody,
+    db: DbSession,
+    user: CurrentUser,
+):
+    """Called by the mechanic/garage to enter the service charge and trigger
+    fee calculation + status transition to payment_pending."""
+    if user.role not in (UserRole.mechanic.value, UserRole.garage.value):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Providers only")
+    job = await job_service.get_job_for_user(db, job_id, user)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    try:
+        return await job_service.finalize_job_price(db, job, body.serviceAmount)
+    except InvalidTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
 @router.post("/request/{job_id}/complete")

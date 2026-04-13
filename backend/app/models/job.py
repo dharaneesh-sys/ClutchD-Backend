@@ -28,6 +28,16 @@ class Job(Base):
     price_estimate: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # ── Finalized pricing breakdown (set by mechanic/garage after service) ──
+    service_amount: Mapped[float | None] = mapped_column(Float, nullable=True, comment="Base charge set by mechanic")
+    convenience_fee: Mapped[float | None] = mapped_column(Float, nullable=True, comment="Fixed ₹40 platform fee")
+    cancellation_fee: Mapped[float | None] = mapped_column(Float, nullable=True, comment="Fixed ₹30 cancellation fee")
+    distance_km: Mapped[float | None] = mapped_column(Float, nullable=True, comment="Distance in km")
+    distance_fee: Mapped[float | None] = mapped_column(Float, nullable=True, comment="₹1/km day or ₹2/km night")
+    gst_amount: Mapped[float | None] = mapped_column(Float, nullable=True, comment="18% GST on subtotal")
+    total_amount: Mapped[float | None] = mapped_column(Float, nullable=True, comment="Grand total billed to customer")
+    provider_upi_id: Mapped[str | None] = mapped_column(String(128), nullable=True, comment="UPI ID of the provider")
+
     assigned_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     assigned_mechanic_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("mechanics.id", ondelete="SET NULL"), nullable=True

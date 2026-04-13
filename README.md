@@ -1,6 +1,6 @@
-# MechOnCall — Backend (startup-backup)
+# ClutchD — Backend
 
-Production-oriented FastAPI service for the **MechOnCall** on-demand mechanic platform. It mirrors the API shape expected by the frontend in `the-startup` (`/api` prefix, `/auth/signup`, `/service/request`, `/providers/nearby`, WebSocket at `/ws`) and adds the full spec: PostGIS matching, Redis, Celery, Stripe/Razorpay hooks, admin APIs, and job-scoped WebSockets.
+Production-oriented FastAPI service for the **ClutchD** on-demand mechanic platform. It mirrors the API shape expected by the frontend (`/api` prefix, `/auth/signup`, `/service/request`, `/providers/nearby`, WebSocket at `/ws`) and adds the full spec: PostGIS matching, Redis, Celery, Stripe/Razorpay hooks, admin APIs, and job-scoped WebSockets.
 
 ## Stack
 
@@ -29,14 +29,14 @@ The API container runs `scripts/bootstrap_db.py` on start (creates PostGIS + tab
 
 | Email | Password | Role |
 | --- | --- | --- |
-| `admin@mechoncall.com` | `AdminChangeMe!` | admin |
+| `admin@clutchd.com` | `AdminChangeMe!` | admin |
 | `customer@demo.com` | `demo123456` | customer |
 | `mechanic@demo.com` | `demo123456` | mechanic (verified, near Coimbatore) |
 | `garage@demo.com` | `demo123456` | garage (verified) |
 
 ## Local development (without Docker)
 
-1. Install PostGIS locally and create DB `mechoncall` (or adjust URLs).
+1. Install PostGIS locally and create DB `clutchd` (or adjust URLs).
 2. `cd backend && python -m venv .venv && source .venv/bin/activate`
 3. `pip install -r requirements.txt`
 4. Copy `.env.example` to `.env` and edit.
@@ -46,7 +46,7 @@ The API container runs `scripts/bootstrap_db.py` on start (creates PostGIS + tab
 
 ### Frontend env
 
-Point the Next app at this API (as in `the-startup`):
+Point the Next app at this API:
 
 - `NEXT_PUBLIC_API_URL=http://localhost:8000/api`
 - `NEXT_PUBLIC_WS_URL=ws://localhost:8000/ws`

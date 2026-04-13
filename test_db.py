@@ -4,7 +4,7 @@ import os
 
 async def test_db():
     try:
-        conn = await asyncpg.connect("postgresql://mechoncall:clutchD123@localhost:5432/mechoncall")
+        conn = await asyncpg.connect("postgresql://clutchd:clutchD123@localhost:5432/clutchd")
         
         # Check notifications table
         try:

@@ -2,15 +2,15 @@ services:
   db:
     image: postgis/postgis:16-3.4
     environment:
-      POSTGRES_USER: mechoncall
-      POSTGRES_PASSWORD: mechoncall
-      POSTGRES_DB: mechoncall
+      POSTGRES_USER: clutchd
+      POSTGRES_PASSWORD: clutchd
+      POSTGRES_DB: clutchd
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mechoncall -d mechoncall"]
+      test: ["CMD-SHELL", "pg_isready -U clutchd -d clutchd"]
       interval: 3s
       timeout: 5s
       retries: 15
@@ -28,8 +28,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://mechoncall:mechoncall@db:5432/mechoncall
-      SYNC_DATABASE_URL: postgresql://mechoncall:mechoncall@db:5432/mechoncall
+      DATABASE_URL: postgresql+asyncpg://clutchd:clutchd@db:5432/clutchd
+      SYNC_DATABASE_URL: postgresql://clutchd:clutchd@db:5432/clutchd
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-950f7a372d6647e83034d1a92325cf5d62f78702ecee0d9f2335036a030011cf}
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,https://clutchd.com,https://api.clutchd.com
@@ -45,7 +45,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile.worker
     environment:
-      DATABASE_URL: postgresql+asyncpg://mechoncall:mechoncall@db:5432/mechoncall
+      DATABASE_URL: postgresql+asyncpg://clutchd:clutchd@db:5432/clutchd
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-950f7a372d6647e83034d1a92325cf5d62f78702ecee0d9f2335036a030011cf}
     command: celery -A app.tasks.worker.celery_app worker --loglevel=info

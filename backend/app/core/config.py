@@ -7,12 +7,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "MechOnCall API"
+    app_name: str = "ClutchD API"
     debug: bool = False
     api_prefix: str = "/api"
 
-    database_url: str = "postgresql+asyncpg://mechoncall:mechoncall@localhost:5432/mechoncall"
-    sync_database_url: str = "postgresql://mechoncall:mechoncall@localhost:5432/mechoncall"
+    database_url: str = "postgresql+asyncpg://clutchd:clutchd@localhost:5432/clutchd"
+    sync_database_url: str = "postgresql://clutchd:clutchd@localhost:5432/clutchd"
 
     redis_url: str = "redis://localhost:6379/0"
 
