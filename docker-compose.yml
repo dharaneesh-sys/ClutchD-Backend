@@ -1,12 +1,13 @@
 services:
   db:
     image: postgis/postgis:16-3.4
+    restart: unless-stopped
     environment:
       POSTGRES_USER: clutchd
       POSTGRES_PASSWORD: clutchd
       POSTGRES_DB: clutchd
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -18,15 +19,17 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "6380:6379"
 
   api:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8001:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://clutchd:clutchd@db:5432/clutchd
       SYNC_DATABASE_URL: postgresql://clutchd:clutchd@db:5432/clutchd
@@ -39,11 +42,18 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   worker:
     build:
       context: ./backend
       dockerfile: Dockerfile.worker
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://clutchd:clutchd@db:5432/clutchd
       REDIS_URL: redis://redis:6379/0

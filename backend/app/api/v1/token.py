@@ -68,7 +68,7 @@ def set_refresh_cookie(response: Response, refresh_token: str) -> None:
         secure=is_secure,
         samesite="lax",
         max_age=max_age,
-        path="/api/auth",
+        path="/",
     )
 
 
@@ -76,5 +76,5 @@ def clear_refresh_cookie(response: Response) -> None:
     """Helper to clear the refresh token cookie on logout."""
     response.delete_cookie(
         key="clutchd_refresh",
-        path="/api/auth",
+        path="/",
     )

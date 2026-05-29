@@ -49,7 +49,7 @@ async def finalize_price(
 ):
     """Called by the mechanic/garage to enter the service charge and trigger
     fee calculation + status transition to payment_pending."""
-    if user.role not in (UserRole.mechanic.value, UserRole.garage.value):
+    if user.role not in (UserRole.mechanic.value, UserRole.garage.value, UserRole.admin.value):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Providers only")
     job = await job_service.get_job_for_user(db, job_id, user)
     if not job:

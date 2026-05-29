@@ -27,6 +27,8 @@ class Garage(Base):
     rating: Mapped[float] = mapped_column(Float, default=4.5)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
     upi_id: Mapped[str | None] = mapped_column(String(128), nullable=True, comment="Garage UPI ID for payouts")
+    penalized: Mapped[bool] = mapped_column(Boolean, default=False)
+    penalty_amount: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="Penalty amount in paise")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship("User", back_populates="garage_profile")

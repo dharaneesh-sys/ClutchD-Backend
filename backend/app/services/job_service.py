@@ -467,3 +467,9 @@ async def cancel_job(db: AsyncSession, job: Job) -> None:
     job.status = "cancelled"
     await db.flush()
     await push_status_update(str(job.user_id), str(job.id), "cancelled", None)
+
+
+async def delete_job(db: AsyncSession, job: Job) -> None:
+    """Delete a job and its associated relationships."""
+    await db.delete(job)
+    await db.flush()

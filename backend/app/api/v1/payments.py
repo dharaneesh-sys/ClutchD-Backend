@@ -22,6 +22,11 @@ router = APIRouter(prefix="/payments", tags=["payments"])
 def _get_razorpay_client():
     settings = get_settings()
     if not settings.razorpay_key_id or not settings.razorpay_key_secret:
+        if not settings.debug:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Payment gateway is not configured in production mode"
+            )
         logger.warning("Using MOCK Razorpay client because keys are missing in environment")
         
         class MockQrcode:
