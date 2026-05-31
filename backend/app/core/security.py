@@ -1,3 +1,4 @@
+import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -11,22 +12,49 @@ logger = logging.getLogger(__name__)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-_DEFAULT_SECRET = "change-me-in-production-use-openssl-rand-hex-32"
 _TOKEN_ISSUER = "clutchd"
 _TOKEN_AUDIENCE = "clutchd-api"
 
+# Known weak/default secrets that should never be used in production
+_KNOWN_WEAK_SECRETS = {
+    "change-me-in-production-use-openssl-rand-hex-32",
+}
+
+# Hashes of known weak secrets (catches copies/modifications)
+_KNOWN_WEAK_HASHES: set[str] = {
+    hashlib.sha256(s.encode()).hexdigest()
+    for s in _KNOWN_WEAK_SECRETS
+}
+
 
 def _check_secret() -> str:
-    """Return the JWT secret, raising immediately if default is used in production."""
+    """Return the JWT secret, raising immediately if weak/default in production."""
     settings = get_settings()
-    if settings.jwt_secret_key == _DEFAULT_SECRET and not settings.debug:
-        raise RuntimeError(
-            "FATAL: jwt_secret_key is set to the default value. "
-            "Set a strong secret via the JWT_SECRET_KEY environment variable "
-            "before running in production. Generate one with: "
-            "python -c \"import secrets; print(secrets.token_hex(32))\""
-        )
-    return settings.jwt_secret_key
+    secret = settings.jwt_secret_key
+
+    if not settings.debug:
+        # Check against known weak values
+        if secret in _KNOWN_WEAK_SECRETS:
+            raise RuntimeError(
+                "FATAL: jwt_secret_key is set to a known default value. "
+                "Set a strong secret via the JWT_SECRET_KEY environment variable."
+            )
+        # Check against known weak hashes
+        if hashlib.sha256(secret.encode()).hexdigest() in _KNOWN_WEAK_HASHES:
+            raise RuntimeError(
+                "FATAL: jwt_secret_key matches a known weak secret. "
+                "Generate a strong secret with: "
+                "python -c \"import secrets; print(secrets.token_hex(32))\""
+            )
+        # Warn if secret looks weak (too short)
+        if len(secret) < 32:
+            logger.warning(
+                "WARNING: jwt_secret_key is only %d characters long. "
+                "Use at least 64 characters (32 bytes hex) in production.",
+                len(secret),
+            )
+
+    return secret
 
 
 def hash_password(password: str) -> str:

@@ -2,12 +2,13 @@ import io
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession, require_admin
+from app.core.limiter import limiter
 from app.models.enums import UserRole
 from app.models.job import Job
 from app.models.user import User
@@ -20,7 +21,8 @@ AdminUser = Annotated[User, Depends(require_admin)]
 
 
 @router.post("/create")
-async def jobs_create(body: ServiceRequestCreate, db: DbSession, user: CurrentUser):
+@limiter.limit("10/minute")
+async def jobs_create(request: Request, body: ServiceRequestCreate, db: DbSession, user: CurrentUser):
     if user.role != UserRole.customer.value:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Customers only")
     data = body.model_dump(exclude_none=True)
@@ -28,7 +30,8 @@ async def jobs_create(body: ServiceRequestCreate, db: DbSession, user: CurrentUs
 
 
 @router.post("/assign")
-async def jobs_assign(body: JobAssignRequest, db: DbSession, user: AdminUser):
+@limiter.limit("20/minute")
+async def jobs_assign(request: Request, body: JobAssignRequest, db: DbSession, user: AdminUser):
     r = await db.execute(select(Job).where(Job.id == body.job_id))
     job = r.scalar_one_or_none()
     if not job:
@@ -295,7 +298,8 @@ async def get_invoice(job_id: UUID, db: DbSession, user: CurrentUser):
 
 
 @router.delete("/{job_id}")
-async def delete_job_endpoint(job_id: UUID, db: DbSession, user: CurrentUser):
+@limiter.limit("10/minute")
+async def delete_job_endpoint(request: Request, job_id: UUID, db: DbSession, user: CurrentUser):
     # Fetch job directly to distinguish between 404 and 403
     r = await db.execute(select(Job).where(Job.id == job_id))
     job = r.scalar_one_or_none()

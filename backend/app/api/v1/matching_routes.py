@@ -1,13 +1,16 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 from app.api.deps import DbSession
+from app.core.limiter import limiter
 from app.services import matching
 
 router = APIRouter(tags=["matching"])
 
 
 @router.get("/mechanics/nearby")
+@limiter.limit("30/minute")
 async def mechanics_nearby(
+    request: Request,
     db: DbSession,
     lat: float = Query(...),
     lon: float = Query(...),
@@ -18,7 +21,9 @@ async def mechanics_nearby(
 
 
 @router.get("/garages/nearby")
+@limiter.limit("30/minute")
 async def garages_nearby(
+    request: Request,
     db: DbSession,
     lat: float = Query(...),
     lon: float = Query(...),

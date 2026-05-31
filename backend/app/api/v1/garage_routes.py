@@ -1,10 +1,11 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
+from app.core.limiter import limiter
 from app.models.enums import UserRole
 from app.models.garage import Garage, GarageMechanic
 from app.models.mechanic import Mechanic
@@ -17,7 +18,8 @@ class AddMechanicBody(BaseModel):
 
 
 @router.post("/add-mechanic")
-async def add_mechanic(body: AddMechanicBody, db: DbSession, user: CurrentUser):
+@limiter.limit("10/minute")
+async def add_mechanic(request: Request, body: AddMechanicBody, db: DbSession, user: CurrentUser):
     mechanic_id = body.mechanic_id
     if user.role != UserRole.garage.value:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Garages only")

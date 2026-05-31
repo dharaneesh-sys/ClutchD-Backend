@@ -65,6 +65,7 @@ class SignupPayload(BaseModel):
 class GoogleOAuthRequest(BaseModel):
     credential: str = Field(max_length=8192)
     role: str | None = Field(None, pattern="^(customer|mechanic|garage)$")
+    state: str | None = Field(None, min_length=8, max_length=128)
 
 
 class TokenResponse(BaseModel):
@@ -114,5 +115,5 @@ class ForgotPasswordRequest(BaseModel):
 
 class PasswordResetRequest(BaseModel):
     email: EmailStr
-    code: str = Field(min_length=6, max_length=6)
+    code: str = Field(min_length=1, max_length=16)
     newPassword: str = Field(min_length=6, max_length=128)

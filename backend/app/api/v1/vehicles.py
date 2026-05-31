@@ -1,9 +1,10 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
+from app.core.limiter import limiter
 from app.models.vehicle import Vehicle
 from app.schemas.vehicle import VehicleCreate, VehicleResponse, VehicleUpdate
 
@@ -11,7 +12,8 @@ router = APIRouter(prefix="/vehicles", tags=["vehicles"])
 
 
 @router.post("", response_model=VehicleResponse, status_code=status.HTTP_201_CREATED)
-async def create_vehicle(vehicle_in: VehicleCreate, db: DbSession, current_user: CurrentUser):
+@limiter.limit("10/minute")
+async def create_vehicle(request: Request, vehicle_in: VehicleCreate, db: DbSession, current_user: CurrentUser):
     vehicle = Vehicle(
         user_id=current_user.id,
         **vehicle_in.model_dump(exclude_unset=True),
@@ -39,7 +41,8 @@ async def read_vehicle(vehicle_id: UUID, db: DbSession, current_user: CurrentUse
 
 
 @router.patch("/{vehicle_id}", response_model=VehicleResponse)
-async def update_vehicle(vehicle_id: UUID, vehicle_in: VehicleUpdate, db: DbSession, current_user: CurrentUser):
+@limiter.limit("10/minute")
+async def update_vehicle(request: Request, vehicle_id: UUID, vehicle_in: VehicleUpdate, db: DbSession, current_user: CurrentUser):
     result = await db.execute(select(Vehicle).where(Vehicle.id == vehicle_id, Vehicle.user_id == current_user.id))
     vehicle = result.scalar_one_or_none()
     if not vehicle:
@@ -55,7 +58,8 @@ async def update_vehicle(vehicle_id: UUID, vehicle_in: VehicleUpdate, db: DbSess
 
 
 @router.delete("/{vehicle_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_vehicle(vehicle_id: UUID, db: DbSession, current_user: CurrentUser):
+@limiter.limit("10/minute")
+async def delete_vehicle(request: Request, vehicle_id: UUID, db: DbSession, current_user: CurrentUser):
     result = await db.execute(select(Vehicle).where(Vehicle.id == vehicle_id, Vehicle.user_id == current_user.id))
     vehicle = result.scalar_one_or_none()
     if not vehicle:

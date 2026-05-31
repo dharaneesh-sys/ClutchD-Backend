@@ -1,3 +1,4 @@
+from app.models.audit_log import AuditLog
 from app.models.dispute import Dispute
 from app.models.garage import Garage, GarageMechanic
 from app.models.job import Job
@@ -17,6 +18,7 @@ __all__ = [
     "Review",
     "Payment",
     "Dispute",
+    "AuditLog",
     "Vehicle",
     "Notification",
 ]

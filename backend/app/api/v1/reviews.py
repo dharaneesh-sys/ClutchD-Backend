@@ -1,9 +1,10 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, DbSession
+from app.core.limiter import limiter
 from app.models.enums import UserRole
 from app.models.garage import Garage
 from app.models.job import Job
@@ -37,7 +38,8 @@ async def _recompute_garage_rating(db, garage_id: UUID) -> None:
 
 
 @router.post("/reviews")
-async def create_review(body: ReviewCreate, db: DbSession, user: CurrentUser):
+@limiter.limit("10/minute")
+async def create_review(request: Request, body: ReviewCreate, db: DbSession, user: CurrentUser):
     if user.role != UserRole.customer.value:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Customers only")
     jr = await db.execute(select(Job).where(Job.id == body.job_id))

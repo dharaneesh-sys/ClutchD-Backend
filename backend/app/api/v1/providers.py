@@ -1,10 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, DbSession
+from app.core.limiter import limiter
 from app.models.enums import UserRole
 from app.models.garage import Garage
 from app.models.job import Job
@@ -17,7 +18,9 @@ router = APIRouter(prefix="/providers", tags=["providers"])
 
 
 @router.get("/nearby")
+@limiter.limit("30/minute")
 async def nearby_providers(
+    request: Request,
     db: DbSession,
     lat: float = Query(...),
     lng: float = Query(...),
@@ -48,7 +51,8 @@ class ProfileUpdateBody(BaseModel):
 
 
 @router.patch("/profile")
-async def update_profile(body: ProfileUpdateBody, db: DbSession, user: CurrentUser):
+@limiter.limit("10/minute")
+async def update_profile(request: Request, body: ProfileUpdateBody, db: DbSession, user: CurrentUser):
     if user.role == UserRole.mechanic.value:
         r = await db.execute(select(Mechanic).where(Mechanic.user_id == user.id))
         mech = r.scalar_one_or_none()
@@ -109,7 +113,8 @@ class AvailabilityBody(BaseModel):
 
 
 @router.patch("/availability")
-async def toggle_availability(body: AvailabilityBody, db: DbSession, user: CurrentUser):
+@limiter.limit("10/minute")
+async def toggle_availability(request: Request, body: AvailabilityBody, db: DbSession, user: CurrentUser):
     if user.role != UserRole.mechanic.value:
         raise HTTPException(status_code=403, detail="Mechanics only")
     r = await db.execute(select(Mechanic).where(Mechanic.user_id == user.id))

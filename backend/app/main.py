@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,6 +13,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import select
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from app.api.v1.router import api_router
 from app.api.v1.token import router as token_router
@@ -54,6 +55,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ── Request body size limit (10 MB) ──────────────────────────
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > 10_000_000:
+            return JSONResponse(status_code=413, content={"detail": "Request too large (max 10MB)"})
+        return await call_next(request)
+
+
+app.add_middleware(RequestSizeLimitMiddleware)
+
 app.include_router(api_router, prefix=settings.api_prefix)
 app.include_router(token_router, prefix=settings.api_prefix)
 
@@ -75,19 +88,42 @@ async def security_headers_middleware(request: Request, call_next):
     return response
 
 
-# ---- Global exception handler ----
+# ---- Standardized error response format ----
+def _error_response(status_code: int, error: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": error,
+            "message": message,
+            "status_code": status_code,
+        },
+    )
+
+
+# ---- Override FastAPI's default 422 validation error ----
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return _error_response(
+        status_code=exc.status_code,
+        error=exc.detail if isinstance(exc.detail, str) else "request_error",
+        message=exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+    )
+
+
+# ---- Catch-all for unhandled exceptions ----
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error("Unhandled server error: %s", exc, exc_info=True)
     if settings.debug:
-        # In debug mode, return the real error for development
-        return JSONResponse(
+        return _error_response(
             status_code=500,
-            content={"detail": str(exc)},
+            error="internal_error",
+            message=str(exc),
         )
-    return JSONResponse(
+    return _error_response(
         status_code=500,
-        content={"detail": "Internal server error"},
+        error="internal_error",
+        message="Internal server error",
     )
 
 

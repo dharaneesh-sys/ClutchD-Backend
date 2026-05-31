@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     sync_database_url: str = "postgresql://clutchd:clutchd@localhost:5432/clutchd"
 
     redis_url: str = "redis://localhost:6379/0"
+    redis_password: str | None = None
 
     jwt_secret_key: str = "change-me-in-production-use-openssl-rand-hex-32"
     jwt_algorithm: str = "HS256"

@@ -8,6 +8,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from app.api.audit import audit_log
 from app.api.deps import DbSession, require_admin
 from app.models.dispute import Dispute
 from app.models.enums import DisputeStatus, UserRole
@@ -86,6 +87,7 @@ class UserStatusBody(BaseModel):
 
 
 @router.patch("/users/{user_id}/status")
+@audit_log("toggle_user_status", "user", entity_id_arg="user_id")
 async def toggle_user_status(
     user_id: UUID,
     body: UserStatusBody,
@@ -109,6 +111,7 @@ class VerifyBody(BaseModel):
 
 
 @router.patch("/mechanic/{mechanic_id}/verify")
+@audit_log("verify_mechanic", "mechanic", entity_id_arg="mechanic_id")
 async def verify_mechanic(mechanic_id: UUID, body: VerifyBody, db: DbSession, user: AdminUser):
     result = await db.execute(select(Mechanic).where(Mechanic.id == mechanic_id))
     m = result.scalar_one_or_none()
@@ -120,6 +123,7 @@ async def verify_mechanic(mechanic_id: UUID, body: VerifyBody, db: DbSession, us
 
 
 @router.patch("/garage/{garage_id}/verify")
+@audit_log("verify_garage", "garage", entity_id_arg="garage_id")
 async def verify_garage(garage_id: UUID, body: VerifyBody, db: DbSession, user: AdminUser):
     result = await db.execute(select(Garage).where(Garage.id == garage_id))
     g = result.scalar_one_or_none()
@@ -182,22 +186,24 @@ async def list_pending_kyc(db: DbSession, user: AdminUser):
 # ── Analytics ─────────────────────────────────────────────────
 @router.get("/analytics")
 async def analytics(db: DbSession, user: AdminUser):
-    users = (await db.execute(select(func.count(User.id)))).scalar()
-    jobs_completed = (await db.execute(
-        select(func.count(Job.id)).where(Job.status == "completed")
-    )).scalar()
-    payments = (await db.execute(select(func.coalesce(func.sum(Payment.amount), 0)))).scalar()
-    mechanics = (await db.execute(select(func.count(Mechanic.id)))).scalar()
-    garages = (await db.execute(select(func.count(Garage.id)))).scalar()
-    all_jobs = (await db.execute(select(func.count(Job.id)))).scalar()
+    from sqlalchemy import text
+    row = (await db.execute(text("""
+        SELECT
+            (SELECT COUNT(*) FROM users) AS total_users,
+            (SELECT COUNT(*) FROM jobs WHERE status = 'completed') AS jobs_completed,
+            (SELECT COUNT(*) FROM jobs) AS total_jobs,
+            (SELECT COALESCE(SUM(amount), 0) FROM payments) AS total_revenue,
+            (SELECT COUNT(*) FROM mechanic) AS total_mechanics,
+            (SELECT COUNT(*) FROM garage) AS total_garages
+    """))).one()
     return {
-        "totalUsers": users,
-        "totalJobs": all_jobs,
-        "jobsCompleted": jobs_completed,
-        "activeProviders": (mechanics or 0) + (garages or 0),
-        "totalMechanics": mechanics,
-        "totalGarages": garages,
-        "totalRevenue": payments,
+        "totalUsers": row.total_users,
+        "totalJobs": row.total_jobs,
+        "jobsCompleted": row.jobs_completed,
+        "activeProviders": (row.total_mechanics or 0) + (row.total_garages or 0),
+        "totalMechanics": row.total_mechanics,
+        "totalGarages": row.total_garages,
+        "totalRevenue": row.total_revenue,
     }
 
 
@@ -352,6 +358,7 @@ class PaymentRefundBody(BaseModel):
 
 
 @router.post("/payments/{payment_id}/refund")
+@audit_log("refund_payment", "payment", entity_id_arg="payment_id")
 async def refund_payment(
     payment_id: UUID,
     body: PaymentRefundBody,
@@ -472,6 +479,7 @@ class ForceAssignBody(BaseModel):
 
 
 @router.post("/jobs/{job_id}/force-assign")
+@audit_log("force_assign_job", "job", entity_id_arg="job_id")
 async def force_assign_job(
     job_id: UUID,
     body: ForceAssignBody,
@@ -617,6 +625,7 @@ class DisputeUpdateBody(BaseModel):
 
 
 @router.patch("/disputes/{dispute_id}")
+@audit_log("update_dispute", "dispute", entity_id_arg="dispute_id")
 async def update_dispute(
     dispute_id: UUID,
     body: DisputeUpdateBody,
@@ -643,6 +652,7 @@ class RefundBody(BaseModel):
 
 
 @router.post("/disputes/{dispute_id}/refund")
+@audit_log("refund_dispute", "dispute", entity_id_arg="dispute_id")
 async def refund_dispute(
     dispute_id: UUID,
     body: RefundBody,
@@ -697,6 +707,7 @@ class PenalizeBody(BaseModel):
 
 
 @router.post("/disputes/{dispute_id}/penalize")
+@audit_log("penalize_provider", "dispute", entity_id_arg="dispute_id")
 async def penalize_provider(
     dispute_id: UUID,
     body: PenalizeBody,
@@ -751,6 +762,7 @@ class MessageBody(BaseModel):
 
 
 @router.post("/disputes/{dispute_id}/message")
+@audit_log("message_dispute_parties", "dispute", entity_id_arg="dispute_id")
 async def message_dispute_parties(
     dispute_id: UUID,
     body: MessageBody,
@@ -820,5 +832,6 @@ async def get_pricing(db: DbSession, user: AdminUser):
 
 
 @router.post("/pricing")
+@audit_log("set_pricing", "pricing", entity_id_arg="")
 async def set_pricing(body: PricingBody, db: DbSession, user: AdminUser):
     return {"ok": True, "service_type": body.service_type}

@@ -1,8 +1,9 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 
 from app.api.deps import CurrentUser, DbSession
+from app.core.limiter import limiter
 from app.models.enums import UserRole
 from pydantic import BaseModel
 from app.schemas.job import FinalizePriceBody, PaymentCompleteBody, ServiceRequestCreate, ServiceRequestStatusUpdate
@@ -13,7 +14,8 @@ router = APIRouter(prefix="/service", tags=["service"])
 
 
 @router.post("/request")
-async def create_request(body: ServiceRequestCreate, db: DbSession, user: CurrentUser):
+@limiter.limit("10/minute")
+async def create_request(request: Request, body: ServiceRequestCreate, db: DbSession, user: CurrentUser):
     if user.role != UserRole.customer.value:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Customers only")
     data = body.model_dump(exclude_none=True)
@@ -90,7 +92,8 @@ class SOSRequest(BaseModel):
     lon: float
 
 @router.post("/sos")
-async def trigger_sos(body: SOSRequest, db: DbSession, user: CurrentUser):
+@limiter.limit("5/minute")
+async def trigger_sos(request: Request, body: SOSRequest, db: DbSession, user: CurrentUser):
     # Log emergency
     import logging
     logger = logging.getLogger(__name__)
@@ -98,10 +101,10 @@ async def trigger_sos(body: SOSRequest, db: DbSession, user: CurrentUser):
     
     # Broadcast SOS event to admins and nearby users
     try:
-        from app.ws.manager import connection_manager
+        from app.ws.manager import manager as ws_manager
         # For simplicity, we just push to the user for acknowledgment
         # In a real app we would push to emergency services or an admin dashboard
-        await connection_manager.send_personal_message(str(user.id), {
+        await ws_manager.send_json_to_user(str(user.id), {
             "type": "SOS_ACK",
             "payload": {
                 "message": "Emergency services have been notified.",

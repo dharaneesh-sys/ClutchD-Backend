@@ -1,9 +1,10 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import func, select, update
 
 from app.api.deps import CurrentUser, DbSession
+from app.core.limiter import limiter
 from app.models.notification import Notification
 from app.schemas.notification import NotificationResponse, NotificationUpdate
 
@@ -38,7 +39,9 @@ async def get_notifications(
 
 
 @router.patch("/{notif_id}", response_model=NotificationResponse)
+@limiter.limit("30/minute")
 async def update_notification(
+    request: Request,
     notif_id: UUID,
     body: NotificationUpdate,
     db: DbSession,
@@ -56,11 +59,11 @@ async def update_notification(
     
     # Broadcast new unread count via web socket
     try:
-        from app.ws.manager import connection_manager
+        from app.ws.manager import manager as ws_manager
         c = await db.execute(
             select(func.count(Notification.id)).where(Notification.user_id == user.id, Notification.read == False)
         )
-        await connection_manager.send_personal_message(str(user.id), {
+        await ws_manager.send_json_to_user(str(user.id), {
             "type": "NOTIFICATION_UPDATE",
             "payload": {
                 "unreadCount": c.scalar() or 0
@@ -73,7 +76,9 @@ async def update_notification(
 
 
 @router.patch("/read/all", response_model=dict)
-async def mark_all_read(db: DbSession, user: CurrentUser):
+@limiter.limit("10/minute")
+async def mark_all_read(request: Request, db: DbSession, user: CurrentUser):
+    # Note: no `request` param needed — uses raw DB operation
     await db.execute(
         update(Notification)
         .where(Notification.user_id == user.id, Notification.read == False)
@@ -81,8 +86,8 @@ async def mark_all_read(db: DbSession, user: CurrentUser):
     )
     await db.flush()
     try:
-        from app.ws.manager import connection_manager
-        await connection_manager.send_personal_message(str(user.id), {
+        from app.ws.manager import manager as ws_manager
+        await ws_manager.send_json_to_user(str(user.id), {
             "type": "NOTIFICATION_UPDATE",
             "payload": {
                 "unreadCount": 0

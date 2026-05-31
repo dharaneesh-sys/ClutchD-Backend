@@ -116,6 +116,10 @@ async def logout():
 @router.post("/oauth/google", response_model=TokenResponse)
 @limiter.limit("20/minute")
 async def oauth_google(request: Request, body: GoogleOAuthRequest, db: DbSession):
+    # Validate CSRF state parameter — must be present and at least 8 chars
+    if not body.state or len(body.state) < 8:
+        raise HTTPException(status_code=400, detail="Missing or invalid OAuth state parameter")
+
     settings = get_settings()
     try:
         async with httpx.AsyncClient() as client:
@@ -189,42 +193,85 @@ async def oauth_google(request: Request, body: GoogleOAuthRequest, db: DbSession
 
 
 @router.post("/forgot-password/request", response_model=MessageResponse)
-@limiter.limit("5/minute")
+@limiter.limit("3/minute")
 async def forgot_password_request(request: Request, body: ForgotPasswordRequest, db: DbSession):
     from sqlalchemy import select
-    res = await db.execute(select(User).where(User.email == body.email.lower()))
+    email = body.email.lower()
+    
+    # Check per-email rate limit (stored in Redis)
+    r = await get_redis()
+    request_key = f"reset_rate:{email}"
+    request_count = await r.get(request_key)
+    if request_count and int(request_count) >= 3:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many password reset requests for this email. Please try again later.",
+        )
+    # Increment and set 1-hour TTL
+    await r.incr(request_key)
+    await r.expire(request_key, 3600)
+
+    res = await db.execute(select(User).where(User.email == email))
     user = res.scalar_one_or_none()
     if not user:
         # Don't reveal if user exists or not, just return success
         return MessageResponse(message="If an account with that email exists, a password reset code has been generated.")
 
-    # Generate 6-digit pin
-    import random
-    code = f"{random.randint(0, 999999):06d}"
+    # Generate alphanumeric reset code (8+ chars, ~238x more combinations than 6-digit)
+    code = secrets.token_urlsafe(6)  # 8 chars, mixed case + digits
     
     # Save to Redis with 10 min (600s) expiry
-    r = await get_redis()
-    await r.setex(f"reset:{user.email.lower()}", 600, code)
+    await r.setex(f"reset:{email}", 600, code)
+    
+    # Track failed attempts separately
+    await r.delete(f"reset_attempts:{email}")
     
     # LOG the code instead of sending an email for local testing
     logger.warning("=====================================================")
     logger.warning(f"PASSWORD RESET REQUESTED FOR {user.email}")
-    logger.warning(f"YOUR 6-DIGIT CODE IS: {code}")
+    logger.warning(f"YOUR RESET CODE IS: {code}")
     logger.warning("=====================================================")
     
     return MessageResponse(message="If an account with that email exists, a password reset code has been generated.")
 
 
 @router.post("/forgot-password/reset", response_model=MessageResponse)
-@limiter.limit("5/minute")
+@limiter.limit("3/minute")
 async def forgot_password_reset(request: Request, body: PasswordResetRequest, db: DbSession):
     from sqlalchemy import select
     email = body.email.lower()
     
     r = await get_redis()
+    
+    # Check for account lockout due to too many failed attempts
+    attempts_key = f"reset_attempts:{email}"
+    attempts = await r.get(attempts_key)
+    if attempts and int(attempts) >= 5:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed reset attempts. Your account is temporarily locked. Try again later.",
+        )
+    
     stored_code = await r.get(f"reset:{email}")
     
     if not stored_code or stored_code != body.code:
+        # Track the failed attempt
+        if stored_code is not None:
+            await r.incr(attempts_key)
+            await r.expire(attempts_key, 3600)
+            remaining = 4 - (int(attempts or 0))
+            if remaining > 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid reset code. {remaining} attempt(s) remaining before temporary lockout.",
+                )
+            else:
+                # Delete the reset code to prevent further attempts
+                await r.delete(f"reset:{email}")
+                raise HTTPException(
+                    status_code=429,
+                    detail="Too many failed reset attempts. Account temporarily locked for 1 hour.",
+                )
         raise HTTPException(status_code=400, detail="Invalid or expired reset code")
         
     res = await db.execute(select(User).where(User.email == email))
@@ -236,7 +283,9 @@ async def forgot_password_reset(request: Request, body: PasswordResetRequest, db
     user.password_hash = hash_password(body.newPassword)
     await db.flush()
     
-    # Delete the code
+    # Clean up all reset-related keys
     await r.delete(f"reset:{email}")
+    await r.delete(attempts_key)
+    await r.delete(f"reset_rate:{email}")
     
     return MessageResponse(message="Password has been successfully updated.")

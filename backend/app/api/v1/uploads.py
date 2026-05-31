@@ -1,10 +1,11 @@
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
 from app.api.deps import CurrentUser
 from app.core.config import get_settings
+from app.core.limiter import limiter
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
@@ -13,7 +14,8 @@ CHUNK_SIZE = 64 * 1024  # 64 KB chunks
 
 
 @router.post("")
-async def upload_file(user: CurrentUser, file: UploadFile = File(...)):
+@limiter.limit("10/minute")
+async def upload_file(request: Request, user: CurrentUser, file: UploadFile = File(...)):
     settings = get_settings()
     if not file.filename:
         raise HTTPException(status_code=422, detail="No filename")
