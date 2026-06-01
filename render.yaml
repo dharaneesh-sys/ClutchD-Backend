@@ -3,7 +3,7 @@ services:
     name: clutchd-api
     runtime: python
     region: singapore
-    plan: starter
+    plan: free
     buildCommand: pip install -r backend/requirements.txt
     startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
@@ -36,7 +36,7 @@ services:
     name: clutchd-worker
     runtime: python
     region: singapore
-    plan: starter
+    plan: free
     buildCommand: pip install -r backend/requirements.txt
     startCommand: cd backend && celery -A app.tasks.worker.celery_app worker --loglevel=info
     envVars:
@@ -66,9 +66,9 @@ services:
 
   - type: keyvalue
     name: clutchd-redis
-    plan: starter
+    plan: free
     ipAllowList: []
 
 databases:
   - name: clutchd-db
-    plan: starter
+    plan: free
