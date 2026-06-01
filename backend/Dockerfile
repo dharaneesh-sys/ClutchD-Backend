@@ -21,4 +21,4 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "python scripts/bootstrap_db.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "python scripts/bootstrap_db.py 2>&1 | tail -20 && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

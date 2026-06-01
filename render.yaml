@@ -1,0 +1,70 @@
+services:
+  - type: web
+    name: clutchd-api
+    runtime: python
+    region: singapore
+    plan: starter
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: clutchd-db
+          property: connectionString
+      - key: SYNC_DATABASE_URL
+        fromDatabase:
+          name: clutchd-db
+          property: connectionString
+      - key: REDIS_URL
+        fromDatabase:
+          name: clutchd-redis
+          property: connectionString
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: http://localhost:3000,https://clutchd-app.onrender.com
+      - key: DEBUG
+        value: "false"
+      - key: PYTHONPATH
+        value: /opt/render/project/src/backend
+      - key: DEV_AUTO_VERIFY_PROVIDERS
+        value: "false"
+
+  - type: worker
+    name: clutchd-worker
+    runtime: python
+    region: singapore
+    plan: starter
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && celery -A app.tasks.worker.celery_app worker --loglevel=info
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: clutchd-db
+          property: connectionString
+      - key: REDIS_URL
+        fromDatabase:
+          name: clutchd-redis
+          property: connectionString
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: CELERY_BROKER_URL
+        fromDatabase:
+          name: clutchd-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromDatabase:
+          name: clutchd-redis
+          property: connectionString
+      - key: PYTHONPATH
+        value: /opt/render/project/src/backend
+
+databases:
+  - name: clutchd-db
+    databaseType: postgres
+    plan: starter
+
+redis:
+  - name: clutchd-redis
+    plan: starter

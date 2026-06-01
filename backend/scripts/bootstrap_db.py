@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
+
+logger = logging.getLogger(__name__)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -58,9 +61,10 @@ async def create_schema() -> None:
     import app.models  # noqa: F401 — register mappers
 
     async with engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
-        # We still run create_all for regular tables that might not be in alembic yet
-        # though ideally everything should be in alembic.
+        try:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+        except Exception:
+            logger.warning("PostGIS extension not available — spatial queries will use Python fallback")
         await conn.run_sync(Base.metadata.create_all)
 
 
