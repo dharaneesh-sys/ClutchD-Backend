@@ -67,6 +67,7 @@ services:
   - type: keyvalue
     name: clutchd-redis
     plan: starter
+    ipAllowList: []
 
 databases:
   - name: clutchd-db
