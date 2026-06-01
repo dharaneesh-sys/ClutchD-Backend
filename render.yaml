@@ -17,7 +17,8 @@ services:
           name: clutchd-db
           property: connectionString
       - key: REDIS_URL
-        fromDatabase:
+        fromService:
+          type: keyvalue
           name: clutchd-redis
           property: connectionString
       - key: JWT_SECRET_KEY
@@ -44,26 +45,29 @@ services:
           name: clutchd-db
           property: connectionString
       - key: REDIS_URL
-        fromDatabase:
+        fromService:
+          type: keyvalue
           name: clutchd-redis
           property: connectionString
       - key: JWT_SECRET_KEY
         generateValue: true
       - key: CELERY_BROKER_URL
-        fromDatabase:
+        fromService:
+          type: keyvalue
           name: clutchd-redis
           property: connectionString
       - key: CELERY_RESULT_BACKEND
-        fromDatabase:
+        fromService:
+          type: keyvalue
           name: clutchd-redis
           property: connectionString
       - key: PYTHONPATH
         value: /opt/render/project/src/backend
 
+  - type: keyvalue
+    name: clutchd-redis
+    plan: starter
+
 databases:
   - name: clutchd-db
-    type: postgres
-    plan: starter
-  - name: clutchd-redis
-    type: redis
     plan: starter
