@@ -62,9 +62,8 @@ services:
 
 databases:
   - name: clutchd-db
-    databaseType: postgres
+    type: postgres
     plan: starter
-
-redis:
   - name: clutchd-redis
+    type: redis
     plan: starter
