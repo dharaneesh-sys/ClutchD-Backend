@@ -26,7 +26,7 @@ from app.schemas.auth import (
 from app.services import auth_service
 from app.services.auth_service import AuthError
 from app.services.user_payload import user_to_frontend_dict
-from app.api.v1.token import set_refresh_cookie, clear_refresh_cookie
+from app.api.v1.token import set_refresh_cookie, clear_refresh_cookie, set_access_token_cookie, clear_access_token_cookie
 from app.core.redis_client import get_redis
 import logging
 
@@ -47,6 +47,7 @@ async def login_route(request: Request, body: LoginRequest, db: DbSession):
         refresh = create_refresh_token(user_id)
         response = JSONResponse(content=TokenResponse(token=token, user=user_payload).model_dump())
         set_refresh_cookie(response, refresh)
+        set_access_token_cookie(response, token)
         return response
     except AuthError as e:
         raise _auth_exc(e) from e
@@ -60,6 +61,7 @@ async def signup_route(request: Request, body: SignupPayload, db: DbSession):
         refresh = create_refresh_token(user_id)
         response = JSONResponse(content=TokenResponse(token=token, user=user_payload).model_dump())
         set_refresh_cookie(response, refresh)
+        set_access_token_cookie(response, token)
         return response
     except AuthError as e:
         raise _auth_exc(e) from e
@@ -75,6 +77,7 @@ async def register_customer(request: Request, body: CustomerRegister, db: DbSess
         refresh = create_refresh_token(user_id)
         response = JSONResponse(content=TokenResponse(token=token, user=user_payload).model_dump())
         set_refresh_cookie(response, refresh)
+        set_access_token_cookie(response, token)
         return response
     except AuthError as e:
         raise _auth_exc(e) from e
@@ -88,6 +91,7 @@ async def register_mechanic(request: Request, body: MechanicRegister, db: DbSess
         refresh = create_refresh_token(user_id)
         response = JSONResponse(content=TokenResponse(token=token, user=user_payload).model_dump())
         set_refresh_cookie(response, refresh)
+        set_access_token_cookie(response, token)
         return response
     except AuthError as e:
         raise _auth_exc(e) from e
@@ -101,6 +105,7 @@ async def register_garage(request: Request, body: GarageRegister, db: DbSession)
         refresh = create_refresh_token(user_id)
         response = JSONResponse(content=TokenResponse(token=token, user=user_payload).model_dump())
         set_refresh_cookie(response, refresh)
+        set_access_token_cookie(response, token)
         return response
     except AuthError as e:
         raise _auth_exc(e) from e
@@ -110,6 +115,7 @@ async def register_garage(request: Request, body: GarageRegister, db: DbSession)
 async def logout():
     response = JSONResponse(content=MessageResponse(message="ok").model_dump())
     clear_refresh_cookie(response)
+    clear_access_token_cookie(response)
     return response
 
 
@@ -210,6 +216,7 @@ async def oauth_google(request: Request, body: GoogleOAuthRequest, db: DbSession
     payload = await user_to_frontend_dict(db, user)
     response = JSONResponse(content=TokenResponse(token=token, user=payload).model_dump())
     set_refresh_cookie(response, refresh)
+    set_access_token_cookie(response, token)
     return response
 
 

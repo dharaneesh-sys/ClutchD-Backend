@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     upload_dir: str = "uploads"
     max_upload_mb: int = 10
 
+    # Access token cookie settings (httpOnly, Secure, SameSite=Strict)
+    access_token_cookie_name: str = "access_token"
+    access_token_cookie_secure: bool = True
+    access_token_cookie_samesite: str = "strict"
+    access_token_cookie_max_age: int = 900  # 15 minutes in seconds
+
     rate_limit_auth: str = "20/minute"
 
     # When true, new mechanics/garages are verified immediately (local demos only).

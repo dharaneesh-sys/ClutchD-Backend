@@ -78,3 +78,26 @@ def clear_refresh_cookie(response: Response) -> None:
         key="clutchd_refresh",
         path="/",
     )
+
+
+def set_access_token_cookie(response: Response, token: str) -> None:
+    """Set the access token as an httpOnly, Secure, SameSite=Strict cookie."""
+    settings = get_settings()
+    response.set_cookie(
+        key=settings.access_token_cookie_name,
+        value=token,
+        httponly=True,
+        secure=settings.access_token_cookie_secure,
+        samesite=settings.access_token_cookie_samesite,
+        max_age=settings.access_token_cookie_max_age,
+        path="/",
+    )
+
+
+def clear_access_token_cookie(response: Response) -> None:
+    """Clear the access token cookie on logout."""
+    settings = get_settings()
+    response.delete_cookie(
+        key=settings.access_token_cookie_name,
+        path="/",
+    )

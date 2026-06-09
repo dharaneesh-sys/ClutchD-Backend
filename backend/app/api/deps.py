@@ -1,11 +1,12 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.security import decode_token
 from app.db.session import get_db
 from app.models.enums import UserRole
@@ -17,10 +18,18 @@ security = HTTPBearer(auto_error=False)
 async def get_current_user_optional(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    request: Request,
 ) -> User | None:
-    if not credentials:
+    token: str | None = None
+    if credentials:
+        token = credentials.credentials
+    else:
+        settings = get_settings()
+        token = request.cookies.get(settings.access_token_cookie_name)
+
+    if not token:
         return None
-    payload = decode_token(credentials.credentials)
+    payload = decode_token(token)
     if not payload or "sub" not in payload:
         return None
     try:
