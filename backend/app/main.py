@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from http import HTTPStatus
 from pathlib import Path
 from uuid import UUID
+import uuid
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,6 +52,7 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         status_code=429,
         error="Too Many Requests",
         detail="Rate limit exceeded. Please slow down.",
+        request_id=request.state.request_id,
     )
 
 app.add_middleware(SlowAPIMiddleware)
@@ -64,15 +66,33 @@ app.add_middleware(
 )
 
 
+# ── Request ID tracking ──────────────────────────────────────
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
+        request_id = uuid.uuid4()
+        request.state.request_id = str(request_id)
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = str(request_id)
+        return response
+
+
 # ── Request body size limit (10 MB) ──────────────────────────
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         content_length = request.headers.get("content-length")
         if content_length and int(content_length) > 10_000_000:
-            return JSONResponse(status_code=413, content={"error": "Request Too Large", "detail": "Request too large (max 10MB)"})
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "error": "Request Too Large",
+                    "detail": "Request too large (max 10MB)",
+                    "request_id": request.state.request_id,
+                },
+            )
         return await call_next(request)
 
 
+app.add_middleware(RequestIDMiddleware)
 app.add_middleware(RequestSizeLimitMiddleware)
 
 app.include_router(api_router, prefix=settings.api_prefix)
@@ -97,14 +117,17 @@ async def security_headers_middleware(request: Request, call_next):
 
 
 # ---- Standardized error response format ----
-def _error_response(status_code: int, error: str, detail: str) -> JSONResponse:
+def _error_response(status_code: int, error: str, detail: str, request_id: str = "") -> JSONResponse:
+    content: dict = {
+        "error": error,
+        "detail": detail,
+        "status_code": status_code,
+    }
+    if request_id:
+        content["request_id"] = request_id
     return JSONResponse(
         status_code=status_code,
-        content={
-            "error": error,
-            "detail": detail,
-            "status_code": status_code,
-        },
+        content=content,
     )
 
 
@@ -116,6 +139,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         status_code=exc.status_code,
         error=HTTPStatus(exc.status_code).phrase,
         detail=detail,
+        request_id=request.state.request_id,
     )
 
 
@@ -128,11 +152,13 @@ async def global_exception_handler(request: Request, exc: Exception):
             status_code=500,
             error="Internal Server Error",
             detail=str(exc),
+            request_id=request.state.request_id,
         )
     return _error_response(
         status_code=500,
         error="Internal Server Error",
         detail="Internal server error",
+        request_id=request.state.request_id,
     )
 
 
