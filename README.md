@@ -25,6 +25,23 @@ docker compose up --build
 
 The API container runs `scripts/bootstrap_db.py` on start (creates PostGIS + tables + seed users if missing).
 
+### Worker (Celery)
+
+The Celery worker is **disabled by default** (restart policy: `"no"`). It processes background tasks such as job assignment retries and notifications.
+
+```bash
+# Start the worker
+docker compose up -d worker
+
+# Stop the worker
+docker compose stop worker
+
+# View worker logs
+docker compose logs -f worker
+```
+
+The API works without the worker — tasks simply queue in Redis until the worker is running again.
+
 ### Seed accounts
 
 | Email | Password | Role |

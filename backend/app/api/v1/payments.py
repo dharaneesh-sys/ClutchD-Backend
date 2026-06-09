@@ -4,7 +4,7 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 
 from app.api.deps import CurrentUser, DbSession
@@ -78,7 +78,7 @@ def _get_razorpay_client():
 # ── Create Order ──────────────────────────────────────
 class PaymentCreateRequest(BaseModel):
     job_id: UUID
-    amount: int  # in paise (100 = ₹1)
+    amount: int = Field(ge=100, le=50000000)  # in paise (100 = ₹1)
     currency: str = "inr"
 
 
@@ -325,7 +325,7 @@ async def qr_status(qr_id: str, db: DbSession, user: CurrentUser):
 # ── Cash Payment ──────────────────────────────────────
 class CashPaymentRequest(BaseModel):
     job_id: UUID
-    amount: int
+    amount: int = Field(ge=100, le=50000000)
 
 
 @router.post("/cash")

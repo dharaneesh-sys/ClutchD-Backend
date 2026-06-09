@@ -113,12 +113,33 @@ async def logout():
     return response
 
 
+@router.get("/oauth/state")
+@limiter.limit("30/minute")
+async def oauth_state(request: Request):
+    """Generate a new OAuth state value and store it in Redis with 5-minute expiry."""
+    r = await get_redis()
+    state = secrets.token_urlsafe(32)
+    await r.setex(f"oauth_state:{state}", 300, "1")
+    logger.debug("Generated OAuth state: %s", state[:8] + "...")
+    return {"state": state}
+
+
 @router.post("/oauth/google", response_model=TokenResponse)
 @limiter.limit("20/minute")
 async def oauth_google(request: Request, body: GoogleOAuthRequest, db: DbSession):
-    # Validate CSRF state parameter — must be present and at least 8 chars
-    if not body.state or len(body.state) < 8:
-        raise HTTPException(status_code=400, detail="Missing or invalid OAuth state parameter")
+    # Validate CSRF state parameter against Redis store (single-use, 5-min expiry)
+    if not body.state:
+        logger.warning("OAuth state parameter missing in request")
+        raise HTTPException(status_code=400, detail="Missing OAuth state parameter")
+
+    r = await get_redis()
+    stored = await r.get(f"oauth_state:{body.state}")
+    if not stored:
+        logger.warning("OAuth state not found or expired: %s", body.state[:8] + "..." if len(body.state) > 8 else body.state)
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state parameter")
+
+    # Single-use: delete the state after successful verification
+    await r.delete(f"oauth_state:{body.state}")
 
     settings = get_settings()
     try:

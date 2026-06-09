@@ -132,8 +132,18 @@ async def health():
     return {"status": "ok"}
 
 
-async def _authenticate_ws(websocket: WebSocket, token: str | None) -> User | None:
-    """Shared auth helper for WebSocket endpoints. Returns the User or None."""
+async def _authenticate_ws(websocket: WebSocket, token: str | None = None) -> User | None:
+    """Shared auth helper for WebSocket endpoints. Returns the User or None.
+    
+    Token is read from Sec-WebSocket-Protocol header first (preferred, no URL leakage),
+    then falls back to query parameter for backward compatibility.
+    """
+    # Try to get token from Sec-WebSocket-Protocol header first
+    protocol_header = websocket.headers.get("sec-websocket-protocol")
+    if protocol_header:
+        # Header contains comma-separated protocols; token is the first one
+        token = protocol_header.split(",")[0].strip()
+    
     if not token:
         await websocket.close(code=4401)
         return None
@@ -157,6 +167,7 @@ async def _authenticate_ws(websocket: WebSocket, token: str | None) -> User | No
 
 @app.websocket("/ws")
 async def websocket_user(websocket: WebSocket, token: str | None = None):
+    # token from query param kept for backward compat; _authenticate_ws prefers Sec-WebSocket-Protocol header
     user = await _authenticate_ws(websocket, token)
     if not user:
         return
@@ -231,6 +242,7 @@ async def websocket_user(websocket: WebSocket, token: str | None = None):
 
 @app.websocket("/ws/tracking/{job_id}")
 async def websocket_tracking(websocket: WebSocket, job_id: str, token: str | None = None):
+    # token from query param kept for backward compat; _authenticate_ws prefers Sec-WebSocket-Protocol header
     user = await _authenticate_ws(websocket, token)
     if not user:
         return

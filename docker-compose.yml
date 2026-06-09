@@ -53,7 +53,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile.worker
-    restart: unless-stopped
+    restart: "no"
     environment:
       DATABASE_URL: postgresql+asyncpg://clutchd:clutchd@db:5432/clutchd
       REDIS_URL: redis://redis:6379/0

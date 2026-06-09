@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # When PostGIS is not available (Render managed PostgreSQL, etc.),
 # fall back to fetching all records and computing distances in Python.
 # Set the max we'll pull for in-memory sorting to avoid OOM.
-_MAX_FALLBACK_ROWS = 2000
+_MAX_FALLBACK_ROWS = 200
 
 
 @dataclass
@@ -70,18 +70,23 @@ async def _fallback_mechanics(
     limit: int,
     issue_tag: str | None,
 ) -> list[RankedMechanic]:
-    q = text("""
-        SELECT id, full_name, lat, lon, rating, expertise
-        FROM mechanics
-        WHERE verified = true AND available = true
-        {tag_filter}
-        LIMIT :maxrows
-    """.format(
-        tag_filter="AND expertise && ARRAY[CAST(:tag AS VARCHAR)]" if issue_tag else ""
-    ))
-    params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS}
     if issue_tag:
-        params["tag"] = issue_tag
+        q = text("""
+            SELECT id, full_name, lat, lon, rating, expertise
+            FROM mechanics
+            WHERE verified = true AND available = true
+              AND expertise && ARRAY[CAST(:tag AS VARCHAR)]
+            LIMIT :maxrows
+        """)
+        params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS, "tag": issue_tag}
+    else:
+        q = text("""
+            SELECT id, full_name, lat, lon, rating, expertise
+            FROM mechanics
+            WHERE verified = true AND available = true
+            LIMIT :maxrows
+        """)
+        params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS}
     result = await db.execute(q, params)
     rows = result.mappings().all()
 
@@ -112,18 +117,23 @@ async def _fallback_garages(
     limit: int,
     issue_tag: str | None,
 ) -> list[RankedGarage]:
-    q = text("""
-        SELECT id, garage_name, lat, lon, rating, services
-        FROM garages
-        WHERE verified = true
-        {tag_filter}
-        LIMIT :maxrows
-    """.format(
-        tag_filter="AND services && ARRAY[CAST(:tag AS VARCHAR)]" if issue_tag else ""
-    ))
-    params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS}
     if issue_tag:
-        params["tag"] = issue_tag
+        q = text("""
+            SELECT id, garage_name, lat, lon, rating, services
+            FROM garages
+            WHERE verified = true
+              AND services && ARRAY[CAST(:tag AS VARCHAR)]
+            LIMIT :maxrows
+        """)
+        params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS, "tag": issue_tag}
+    else:
+        q = text("""
+            SELECT id, garage_name, lat, lon, rating, services
+            FROM garages
+            WHERE verified = true
+            LIMIT :maxrows
+        """)
+        params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS}
     result = await db.execute(q, params)
     rows = result.mappings().all()
 
