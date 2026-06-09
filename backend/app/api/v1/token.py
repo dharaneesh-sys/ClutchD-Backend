@@ -21,7 +21,7 @@ class RefreshResponse(BaseModel):
     token: str
 
 
-@router.post("/refresh", response_model=RefreshResponse)
+@router.post("/refresh")  # response_model deliberately omitted — we return JSONResponse to set cookies
 async def refresh_token(
     request: Request,
     db: DbSession,
