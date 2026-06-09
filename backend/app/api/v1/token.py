@@ -90,7 +90,7 @@ def set_access_token_cookie(response: Response, token: str) -> None:
         key=settings.access_token_cookie_name,
         value=token,
         httponly=True,
-        secure=settings.access_token_cookie_secure,
+        secure=not settings.debug,
         samesite=settings.access_token_cookie_samesite,
         max_age=settings.access_token_cookie_max_age,
         path="/",
