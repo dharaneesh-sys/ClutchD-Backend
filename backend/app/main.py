@@ -2,6 +2,7 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
+from http import HTTPStatus
 from pathlib import Path
 from uuid import UUID
 
@@ -9,7 +10,6 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import select
@@ -44,7 +44,15 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.state.limiter = app_limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return _error_response(
+        status_code=429,
+        error="Too Many Requests",
+        detail="Rate limit exceeded. Please slow down.",
+    )
+
 app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(
@@ -61,7 +69,7 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         content_length = request.headers.get("content-length")
         if content_length and int(content_length) > 10_000_000:
-            return JSONResponse(status_code=413, content={"detail": "Request too large (max 10MB)"})
+            return JSONResponse(status_code=413, content={"error": "Request Too Large", "detail": "Request too large (max 10MB)"})
         return await call_next(request)
 
 
@@ -89,12 +97,12 @@ async def security_headers_middleware(request: Request, call_next):
 
 
 # ---- Standardized error response format ----
-def _error_response(status_code: int, error: str, message: str) -> JSONResponse:
+def _error_response(status_code: int, error: str, detail: str) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content={
             "error": error,
-            "message": message,
+            "detail": detail,
             "status_code": status_code,
         },
     )
@@ -103,10 +111,11 @@ def _error_response(status_code: int, error: str, message: str) -> JSONResponse:
 # ---- Override FastAPI's default 422 validation error ----
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
+    detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
     return _error_response(
         status_code=exc.status_code,
-        error=exc.detail if isinstance(exc.detail, str) else "request_error",
-        message=exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+        error=HTTPStatus(exc.status_code).phrase,
+        detail=detail,
     )
 
 
@@ -117,13 +126,13 @@ async def global_exception_handler(request: Request, exc: Exception):
     if settings.debug:
         return _error_response(
             status_code=500,
-            error="internal_error",
-            message=str(exc),
+            error="Internal Server Error",
+            detail=str(exc),
         )
     return _error_response(
         status_code=500,
-        error="internal_error",
-        message="Internal server error",
+        error="Internal Server Error",
+        detail="Internal server error",
     )
 
 
