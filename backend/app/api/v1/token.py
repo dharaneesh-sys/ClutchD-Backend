@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Response, Request, Cookie
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.api.deps import CurrentUser, DbSession
@@ -53,7 +54,9 @@ async def refresh_token(
 
     # Issue new access token
     new_access = create_access_token(str(user.id), {"role": user.role})
-    return RefreshResponse(token=new_access)
+    response = JSONResponse(content=RefreshResponse(token=new_access).model_dump())
+    set_access_token_cookie(response, new_access)
+    return response
 
 
 def set_refresh_cookie(response: Response, refresh_token: str) -> None:
