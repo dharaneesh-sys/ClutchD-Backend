@@ -5,6 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+
+settings = get_settings()
 from app.models.garage import Garage
 from app.models.job import Job
 from app.models.mechanic import Mechanic
@@ -41,8 +43,7 @@ def job_response_dict(job: Job, mechanic_summary: dict | None = None) -> dict[st
             "distanceFee": job.distance_fee,
             "gstAmount": job.gst_amount,
             "totalAmount": job.total_amount,
-            "providerUpiId": job.provider_upi_id,
-            "platformUpiId": "amdevanand206@oksbi",
+            "platformUpiId": settings.platform_upi_id,
         }
     return {
         "id": str(job.id),
@@ -337,9 +338,6 @@ CANCELLATION_FEE = 30.0
 DAY_RATE_PER_KM = 1.0
 NIGHT_RATE_PER_KM = 2.0  # after 8 PM
 GST_RATE = 0.18
-PLATFORM_UPI = "amdevanand206@oksbi"
-
-
 async def finalize_job_price(
     db: AsyncSession,
     job: Job,
@@ -417,8 +415,7 @@ async def finalize_job_price(
         "distanceFee": distance_fee,
         "gstAmount": gst_amount,
         "totalAmount": total_amount,
-        "providerUpiId": job.provider_upi_id,
-        "platformUpiId": PLATFORM_UPI,
+        "platformUpiId": settings.platform_upi_id,
     }
     await push_status_update(str(job.user_id), str(job.id), "payment_pending", mech_summary, pricing_ws)
 

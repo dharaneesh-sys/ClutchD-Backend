@@ -1,3 +1,4 @@
+import asyncio
 import secrets
 
 import httpx
@@ -7,7 +8,13 @@ from fastapi.responses import JSONResponse
 from app.api.deps import DbSession
 from app.core.limiter import limiter
 from app.core.config import get_settings
-from app.core.security import create_access_token, create_refresh_token, hash_password
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    hash_password,
+    decode_token,
+    blacklist_token,
+)
 from app.models.user import User
 from app.models.mechanic import Mechanic
 from app.models.garage import Garage
@@ -42,15 +49,34 @@ def _auth_exc(e: AuthError) -> HTTPException:
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("30/minute")
 async def login_route(request: Request, body: LoginRequest, db: DbSession):
+    email = body.email.lower().strip()
+
+    # Per-email rate limiting: max 5 failed attempts per 15 min window
+    r = await get_redis()
+    fail_key = f"login_fails:{email}"
+    fail_count = await r.get(fail_key)
+    if fail_count and int(fail_count) >= 5:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts for this email. Please try again later.",
+        )
+
     try:
-        token, user_payload, user_id = await auth_service.login(db, body.email, body.password)
-        refresh = create_refresh_token(user_id)
-        response = JSONResponse(content=TokenResponse(token=token, user=user_payload).model_dump())
-        set_refresh_cookie(response, refresh)
-        set_access_token_cookie(response, token)
-        return response
+        token, user_payload, user_id = await auth_service.login(db, email, body.password)
     except AuthError as e:
+        # Track failed attempt
+        await r.incr(fail_key)
+        await r.expire(fail_key, 900)
         raise _auth_exc(e) from e
+
+    # Clear failed attempts on success
+    await r.delete(fail_key)
+
+    refresh = create_refresh_token(user_id)
+    response = JSONResponse(content=TokenResponse(token=token, user=user_payload).model_dump())
+    set_refresh_cookie(response, refresh)
+    set_access_token_cookie(response, token)
+    return response
 
 
 @router.post("/signup", response_model=TokenResponse)
@@ -112,10 +138,31 @@ async def register_garage(request: Request, body: GarageRegister, db: DbSession)
 
 
 @router.post("/logout", response_model=MessageResponse)
-async def logout():
+async def logout(request: Request):
     response = JSONResponse(content=MessageResponse(message="ok").model_dump())
     clear_refresh_cookie(response)
     clear_access_token_cookie(response)
+
+    # Revoke the access token if present
+    settings = get_settings()
+    auth_header = request.headers.get("Authorization", "")
+    access_token: str | None = None
+    if auth_header.startswith("Bearer "):
+        access_token = auth_header[7:]
+    if not access_token:
+        access_token = request.cookies.get(settings.access_token_cookie_name)
+    if access_token:
+        payload = decode_token(access_token, expected_type="access")
+        if payload and "jti" in payload:
+            await blacklist_token(payload["jti"])
+
+    # Revoke the refresh token if present
+    refresh_token = request.cookies.get("clutchd_refresh")
+    if refresh_token:
+        payload = decode_token(refresh_token, expected_type="refresh")
+        if payload and "jti" in payload:
+            await blacklist_token(payload["jti"])
+
     return response
 
 
@@ -242,7 +289,8 @@ async def forgot_password_request(request: Request, body: ForgotPasswordRequest,
     res = await db.execute(select(User).where(User.email == email))
     user = res.scalar_one_or_none()
     if not user:
-        # Don't reveal if user exists or not, just return success
+        # Add artificial delay to prevent email enumeration via timing
+        await asyncio.sleep(0.5)
         return MessageResponse(message="If an account with that email exists, a password reset code has been generated.")
 
     # Generate alphanumeric reset code (8+ chars, ~238x more combinations than 6-digit)
@@ -254,11 +302,8 @@ async def forgot_password_request(request: Request, body: ForgotPasswordRequest,
     # Track failed attempts separately
     await r.delete(f"reset_attempts:{email}")
     
-    # LOG the code instead of sending an email for local testing
-    logger.warning("=====================================================")
-    logger.warning(f"PASSWORD RESET REQUESTED FOR {user.email}")
-    logger.warning(f"YOUR RESET CODE IS: {code}")
-    logger.warning("=====================================================")
+    # Log reset event for debugging (never log the actual code)
+    logger.info("Password reset code generated for %s", user.email)
     
     return MessageResponse(message="If an account with that email exists, a password reset code has been generated.")
 

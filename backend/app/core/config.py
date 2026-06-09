@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     # When true, new mechanics/garages are verified immediately (local demos only).
     dev_auto_verify_providers: bool = False
 
+    # Platform UPI ID for receiving platform fees. Set via env var PLATFORM_UPI_ID.
+    platform_upi_id: str = "amdevanand206@oksbi"
+
+    # When true, use mock Razorpay client even in production (for testing).
+    use_mock_payments: bool = False
+
     celery_broker_url: str | None = None
     celery_result_backend: str | None = None
 

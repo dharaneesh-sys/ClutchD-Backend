@@ -8,6 +8,7 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
+    blacklist_token,
 )
 from app.services.user_payload import user_to_frontend_dict
 from sqlalchemy import select
@@ -52,9 +53,15 @@ async def refresh_token(
     if not user:
         raise HTTPException(status_code=401, detail="User not found or inactive")
 
-    # Issue new access token
+    # Rotate refresh token: blacklist old one, issue a new one
+    old_jti = payload.get("jti")
+    if old_jti:
+        await blacklist_token(old_jti)
+
+    new_refresh = create_refresh_token(str(user.id))
     new_access = create_access_token(str(user.id), {"role": user.role})
     response = JSONResponse(content=RefreshResponse(token=new_access).model_dump())
+    set_refresh_cookie(response, new_refresh)
     set_access_token_cookie(response, new_access)
     return response
 

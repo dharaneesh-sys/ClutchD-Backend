@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.security import decode_token
+from app.core.security import decode_token, is_token_blacklisted
 from app.db.session import get_db
 from app.models.enums import UserRole
 from app.models.user import User
@@ -31,6 +31,10 @@ async def get_current_user_optional(
         return None
     payload = decode_token(token)
     if not payload or "sub" not in payload:
+        return None
+    # Check if token has been revoked (logged out)
+    jti = payload.get("jti")
+    if jti and await is_token_blacklisted(jti):
         return None
     try:
         uid = UUID(payload["sub"])

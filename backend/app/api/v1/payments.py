@@ -22,7 +22,7 @@ router = APIRouter(prefix="/payments", tags=["payments"])
 def _get_razorpay_client():
     settings = get_settings()
     if not settings.razorpay_key_id or not settings.razorpay_key_secret:
-        if not settings.debug:
+        if not settings.use_mock_payments and not settings.debug:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Payment gateway is not configured in production mode"
@@ -338,6 +338,16 @@ async def cash_payment(body: CashPaymentRequest, db: DbSession, user: CurrentUse
     job = jr.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    # Prevent double-collect: check if payment already exists for this job
+    existing = await db.execute(
+        select(Payment).where(
+            Payment.job_id == body.job_id,
+            Payment.status.in_(["captured", "pending"]),
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Payment already exists for this job")
 
     # Verify user is the assigned mechanic or admin
     from app.models.mechanic import Mechanic

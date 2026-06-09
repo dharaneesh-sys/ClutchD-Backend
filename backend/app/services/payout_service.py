@@ -1,6 +1,7 @@
 import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.config import get_settings
 from app.models.job import Job
 from app.models.payment import Payment
 
@@ -22,7 +23,7 @@ async def process_payouts(db: AsyncSession, payment: Payment, job: Job):
     platform_amount = job.total_amount - job.service_amount
 
     provider_upi = getattr(job, "provider_upi_id", "NOT_SET")
-    platform_upi = "amdevanand206@oksbi"
+    platform_upi = get_settings().platform_upi_id
 
     # Simulate payout logic (e.g. Razorpay Route / UPI Transfer logic)
     logger.info(f"--- TRIGGERING AUTOMATED PAYOUT FOR JOB {job.id} ---")

@@ -20,7 +20,7 @@ from app.api.v1.router import api_router
 from app.api.v1.token import router as token_router
 from app.core.config import get_settings
 from app.core.limiter import limiter as app_limiter
-from app.core.security import decode_token
+from app.core.security import decode_token, is_token_blacklisted
 from app.db.session import AsyncSessionLocal
 from app.models.user import User
 from app.ws.manager import manager, push_location_update
@@ -167,23 +167,22 @@ async def health():
     return {"status": "ok"}
 
 
-async def _authenticate_ws(websocket: WebSocket, token: str | None = None) -> User | None:
-    """Shared auth helper for WebSocket endpoints. Returns the User or None.
-    
-    Token is read from Sec-WebSocket-Protocol header first (preferred, no URL leakage),
-    then falls back to query parameter for backward compatibility.
-    """
-    # Try to get token from Sec-WebSocket-Protocol header first
+async def _authenticate_ws(websocket: WebSocket) -> User | None:
+    """Authenticate a WebSocket connection via Sec-WebSocket-Protocol header."""
     protocol_header = websocket.headers.get("sec-websocket-protocol")
-    if protocol_header:
-        # Header contains comma-separated protocols; token is the first one
-        token = protocol_header.split(",")[0].strip()
-    
+    if not protocol_header:
+        await websocket.close(code=4401)
+        return None
+    token = protocol_header.split(",")[0].strip()
     if not token:
         await websocket.close(code=4401)
         return None
     payload = decode_token(token)
     if not payload or "sub" not in payload:
+        await websocket.close(code=4401)
+        return None
+    jti = payload.get("jti")
+    if jti and await is_token_blacklisted(jti):
         await websocket.close(code=4401)
         return None
     try:
@@ -201,9 +200,8 @@ async def _authenticate_ws(websocket: WebSocket, token: str | None = None) -> Us
 
 
 @app.websocket("/ws")
-async def websocket_user(websocket: WebSocket, token: str | None = None):
-    # token from query param kept for backward compat; _authenticate_ws prefers Sec-WebSocket-Protocol header
-    user = await _authenticate_ws(websocket, token)
+async def websocket_user(websocket: WebSocket):
+    user = await _authenticate_ws(websocket)
     if not user:
         return
 
@@ -276,9 +274,8 @@ async def websocket_user(websocket: WebSocket, token: str | None = None):
 
 
 @app.websocket("/ws/tracking/{job_id}")
-async def websocket_tracking(websocket: WebSocket, job_id: str, token: str | None = None):
-    # token from query param kept for backward compat; _authenticate_ws prefers Sec-WebSocket-Protocol header
-    user = await _authenticate_ws(websocket, token)
+async def websocket_tracking(websocket: WebSocket, job_id: str):
+    user = await _authenticate_ws(websocket)
     if not user:
         return
     try:

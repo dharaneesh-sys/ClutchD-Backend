@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -75,6 +76,7 @@ def create_access_token(subject: str, extra_claims: dict[str, Any] | None = None
         "iss": _TOKEN_ISSUER,
         "aud": _TOKEN_AUDIENCE,
         "type": "access",
+        "jti": uuid.uuid4().hex,
     }
     if extra_claims:
         payload.update(extra_claims)
@@ -91,6 +93,7 @@ def create_refresh_token(subject: str) -> str:
         "iss": _TOKEN_ISSUER,
         "aud": _TOKEN_AUDIENCE,
         "type": "refresh",
+        "jti": uuid.uuid4().hex,
     }
     return jwt.encode(payload, secret, algorithm=settings.jwt_algorithm)
 

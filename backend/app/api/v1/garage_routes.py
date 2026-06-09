@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -9,6 +10,8 @@ from app.core.limiter import limiter
 from app.models.enums import UserRole
 from app.models.garage import Garage, GarageMechanic
 from app.models.mechanic import Mechanic
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/garage", tags=["garage"])
 
@@ -40,6 +43,7 @@ async def add_mechanic(request: Request, body: AddMechanicBody, db: DbSession, u
         return {"ok": True, "message": "Already linked"}
     db.add(GarageMechanic(garage_id=garage.id, mechanic_id=mechanic_id))
     await db.flush()
+    logger.info("Garage %s (%s) added mechanic %s", garage.id, user.id, mechanic_id)
     return {"ok": True}
 
 
