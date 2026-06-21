@@ -170,32 +170,43 @@ async def health():
 async def _authenticate_ws(websocket: WebSocket) -> User | None:
     """Authenticate a WebSocket connection via Sec-WebSocket-Protocol header."""
     protocol_header = websocket.headers.get("sec-websocket-protocol")
+    logger.info("[WS AUTH] all headers: %s", dict(websocket.headers))
+    logger.info("[WS AUTH] sec-websocket-protocol header: protocol_header=%s", protocol_header)
     if not protocol_header:
+        logger.warning("[WS AUTH] REJECT: no protocol header")
         await websocket.close(code=4401)
         return None
     token = protocol_header.split(",")[0].strip()
+    logger.info("[WS AUTH] protocol split result: first_token_len=%d, first_30_chars=%s", len(token), repr(token[:30]))
     if not token:
+        logger.warning("[WS AUTH] REJECT: empty token after split")
         await websocket.close(code=4401)
         return None
     payload = decode_token(token)
     if not payload or "sub" not in payload:
+        logger.warning("[WS AUTH] REJECT: decode_token returned %s", payload)
         await websocket.close(code=4401)
         return None
+    logger.info("[WS AUTH] decoded OK — sub=%s, type=%s", payload.get("sub"), payload.get("type"))
     jti = payload.get("jti")
     if jti and await is_token_blacklisted(jti):
+        logger.warning("[WS AUTH] REJECT: token blacklisted (jti=%s)", jti)
         await websocket.close(code=4401)
         return None
     try:
         uid = UUID(payload["sub"])
     except ValueError:
+        logger.warning("[WS AUTH] REJECT: invalid UUID sub=%s", payload.get("sub"))
         await websocket.close(code=4401)
         return None
     async with AsyncSessionLocal() as db:
         r = await db.execute(select(User).where(User.id == uid, User.is_active.is_(True)))
         user = r.scalar_one_or_none()
     if not user:
+        logger.warning("[WS AUTH] REJECT: user not found or inactive (uid=%s)", uid)
         await websocket.close(code=4401)
         return None
+    logger.info("[WS AUTH] ACCEPT — user=%s role=%s", user.id, user.role)
     return user
 
 
