@@ -35,7 +35,8 @@ services:
   - type: keyvalue
     name: clutchd-redis
     plan: free
-    ipAllowList: []
+    ipAllowList:
+      - 0.0.0.0/0
 
 databases:
   - name: clutchd-db
