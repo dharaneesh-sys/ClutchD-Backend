@@ -6,12 +6,14 @@ import asyncio
 import logging
 import os
 import sys
+from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.security import hash_password
 from app.db.base import Base
@@ -21,8 +23,50 @@ from app.models.mechanic import Mechanic
 from app.models.user import User
 
 
+def _build_external_db_url() -> str | None:
+    """If DATABASE_URL uses an internal Render hostname, construct the external .render.com URL.
+
+    Render's ``fromDatabase`` connectionString uses an internal hostname such as
+    ``dpg-xxxxx.internal`` which is unreachable on the free plan (no private
+    networking).  This helper converts it to the public equivalent using the
+    region suffix.
+
+    Returns the new URL (with ``+asyncpg`` driver) or ``None`` if no conversion
+    is needed.
+    """
+    url = os.environ.get("DATABASE_URL", "")
+    if not url:
+        return None
+
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+
+    if "render.com" in host:
+        return None
+
+    dpg_id = host.split(".")[0]
+    region = os.environ.get("RENDER_INSTANCE_REGION", "oregon")
+    external_host = f"{dpg_id}.{region}-postgres.render.com"
+
+    port = parsed.port or 5432
+    if parsed.password:
+        netloc = f"{parsed.username}:{parsed.password}@{external_host}:{port}"
+    elif parsed.username:
+        netloc = f"{parsed.username}@{external_host}:{port}"
+    else:
+        netloc = f"{external_host}:{port}"
+
+    new_url = urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+
+    if new_url.startswith("postgresql://"):
+        new_url = new_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+    return new_url
+
+
 async def wait_for_database(max_attempts: int = 40, delay_sec: float = 2.0) -> None:
     """PostGIS image restarts Postgres after init; healthcheck can pass in a gap — retry until stable."""
+    global engine, AsyncSessionLocal
     last_err: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:
@@ -34,7 +78,31 @@ async def wait_for_database(max_attempts: int = 40, delay_sec: float = 2.0) -> N
             last_err = e
             print(f"Waiting for database... ({attempt}/{max_attempts}) {e!r}")
             await asyncio.sleep(delay_sec)
-    raise RuntimeError(f"Database not reachable after {max_attempts} attempts") from last_err
+
+    external_url = _build_external_db_url()
+    if external_url is None:
+        raise RuntimeError(f"Database not reachable after {max_attempts} attempts") from last_err
+
+    print("Internal hostname unreachable — retrying with external .render.com hostname...")
+    new_engine = create_async_engine(
+        external_url,
+        pool_pre_ping=True,
+    )
+    try:
+        async with new_engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception as e:
+        raise RuntimeError(f"Database not reachable after {max_attempts} attempts (external fallback also failed)") from e
+
+    print("Database reachable via external hostname.")
+    engine = new_engine
+    AsyncSessionLocal = async_sessionmaker(new_engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
+
+    sync_url = external_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    os.environ["DATABASE_URL"] = external_url
+    os.environ["SYNC_DATABASE_URL"] = sync_url
+    from app.core.config import get_settings
+    get_settings.cache_clear()
 
 
 async def run_migrations() -> None:
