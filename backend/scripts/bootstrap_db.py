@@ -138,73 +138,15 @@ async def seed() -> None:
             )
             session.add(garage)
 
-        # ---- Extra Mechanic 1: Arjun Reddy ----
-        mu2 = await get_or_create_user(session, "arjun@demo.com", "demo123456", "mechanic")
-        res = await session.execute(select(Mechanic).where(Mechanic.user_id == mu2.id))
-        if not res.scalar_one_or_none():
-            mech2 = Mechanic(
-                user_id=mu2.id,
-                full_name="Arjun Reddy",
-                phone="9871234567",
-                experience="8",
-                expertise=["engine", "transmission", "diagnostics", "oil"],
-                location_address="Gandhipuram, Coimbatore",
-                lat=11.0185,
-                lon=76.9725,
-                rating=4.9,
-                verified=True,
-                available=True,
-            )
-            session.add(mech2)
-
-        # ---- Extra Mechanic 2: Deepa Nair ----
-        mu3 = await get_or_create_user(session, "deepa@demo.com", "demo123456", "mechanic")
-        res = await session.execute(select(Mechanic).where(Mechanic.user_id == mu3.id))
-        if not res.scalar_one_or_none():
-            mech3 = Mechanic(
-                user_id=mu3.id,
-                full_name="Deepa Nair",
-                phone="9998877665",
-                experience="3",
-                expertise=["electrical", "battery", "ac", "diagnostics"],
-                location_address="Peelamedu, Coimbatore",
-                lat=11.0310,
-                lon=76.9880,
-                rating=4.6,
-                verified=True,
-                available=True,
-            )
-            session.add(mech3)
-
-        # ---- Extra Garage: AutoCare Hub ----
-        gu2 = await get_or_create_user(session, "autocare@demo.com", "demo123456", "garage")
-        res = await session.execute(select(Garage).where(Garage.user_id == gu2.id))
-        if not res.scalar_one_or_none():
-            garage2 = Garage(
-                user_id=gu2.id,
-                garage_name="AutoCare Hub",
-                owner_name="Kavitha Rajan",
-                phone="9876501234",
-                services=["engine", "transmission", "brakes", "tires", "suspension", "diagnostics"],
-                mechanic_count=12,
-                operating_hours="7:00 AM - 10:00 PM",
-                location_address="Avinashi Road, Coimbatore",
-                lat=11.0245,
-                lon=76.9810,
-                rating=4.8,
-                verified=True,
-            )
-            session.add(garage2)
-
         # ---- Customer ----
         await get_or_create_user(session, "customer@demo.com", "demo123456", "customer")
 
         await session.commit()
-        print("Seeded all demo accounts (password: demo123456):")
-        print("  admin21907.com / clutchD123")
-        print("  mechanic@demo.com, arjun@demo.com, deepa@demo.com")
-        print("  garage@demo.com, autocare@demo.com")
-        print("  customer@demo.com")
+        print("Seeded all demo accounts:")
+        print("  admin@21907.com / clutchD123")
+        print("  mechanic@demo.com / demo123456")
+        print("  garage@demo.com / demo123456")
+        print("  customer@demo.com / demo123456")
 
 
 async def main() -> None:

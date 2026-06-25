@@ -61,8 +61,7 @@ async def seed():
 
         # Fetch existing users we need references to
         existing_users = {}
-        for email in ["customer@demo.com", "mechanic@demo.com", "garage@demo.com",
-                       "arjun@demo.com", "deepa@demo.com", "autocare@demo.com"]:
+        for email in ["customer@demo.com", "mechanic@demo.com", "garage@demo.com"]:
             r = await session.execute(select(User).where(User.email == email))
             u = r.scalar_one_or_none()
             if u:
@@ -70,20 +69,14 @@ async def seed():
 
         cust_existing = existing_users.get("customer@demo.com")
         mech_vijay_user = existing_users.get("mechanic@demo.com")
-        mech_arjun_user = existing_users.get("arjun@demo.com")
-        mech_deepa_user = existing_users.get("deepa@demo.com")
         garage_speedfix_user = existing_users.get("garage@demo.com")
-        garage_autocare_user = existing_users.get("autocare@demo.com")
 
         # Fetch existing profiles
         def fetch_profile(model, user_id):
             return session.execute(select(model).where(model.user_id == user_id))
 
         mech_vijay = (await fetch_profile(Mechanic, mech_vijay_user.id)).scalar_one_or_none() if mech_vijay_user else None
-        mech_arjun = (await fetch_profile(Mechanic, mech_arjun_user.id)).scalar_one_or_none() if mech_arjun_user else None
-        mech_deepa = (await fetch_profile(Mechanic, mech_deepa_user.id)).scalar_one_or_none() if mech_deepa_user else None
         garage_speedfix = (await fetch_profile(Garage, garage_speedfix_user.id)).scalar_one_or_none() if garage_speedfix_user else None
-        garage_autocare = (await fetch_profile(Garage, garage_autocare_user.id)).scalar_one_or_none() if garage_autocare_user else None
 
         # ── 2. NEW VERIFIED MECHANICS ──────────────────────────────
         mech_rajesh_user = await get_or_create_user(session, "rajesh@demo.com", "demo123456", "mechanic")
@@ -163,12 +156,9 @@ async def seed():
             return session.execute(select(model).where(model.user_id == user_id))
 
         mech_vijay = (await get_profile(Mechanic, mech_vijay_user.id)).scalar_one_or_none()
-        mech_arjun = (await get_profile(Mechanic, mech_arjun_user.id)).scalar_one_or_none()
-        mech_deepa = (await get_profile(Mechanic, mech_deepa_user.id)).scalar_one_or_none()
         mech_rajesh = (await get_profile(Mechanic, mech_rajesh_user.id)).scalar_one_or_none()
         mech_prakash = (await get_profile(Mechanic, mech_prakash_user.id)).scalar_one_or_none()
         garage_speedfix = (await get_profile(Garage, garage_speedfix_user.id)).scalar_one_or_none()
-        garage_autocare = (await get_profile(Garage, garage_autocare_user.id)).scalar_one_or_none()
 
         now = datetime.now(timezone.utc)
 
@@ -212,7 +202,7 @@ async def seed():
                                    "en_route", *coords[2], assigned_mech=mech_vijay,
                                    created_offset=timedelta(minutes=12), price=2500))
         jobs_data.append(make_job(cust_vikram, "brake_issue", "Brakes making grinding noise, pedal feels soft.",
-                                   "en_route", *coords[3], assigned_mech=mech_arjun,
+                                   "en_route", *coords[3], assigned_mech=mech_vijay,
                                    created_offset=timedelta(minutes=18), price=1800))
 
         # In Progress jobs
@@ -220,7 +210,7 @@ async def seed():
                                    "in_progress", *coords[4], assigned_garage=garage_speedfix,
                                    created_offset=timedelta(minutes=30), price=3500))
         jobs_data.append(make_job(cust_ananya, "electrical", "Power windows not working, dashboard lights flickering.",
-                                   "in_progress", *coords[5], assigned_mech=mech_deepa,
+                                   "in_progress", *coords[5], assigned_mech=mech_rajesh,
                                    created_offset=timedelta(minutes=45), price=2200))
         jobs_data.append(make_job(cust_rohan, "oil_leak", "Oil leaking underneath, low oil pressure warning on.",
                                    "in_progress", *coords[6], assigned_mech=mech_rajesh,
@@ -228,7 +218,7 @@ async def seed():
 
         # Nearing Completion (in_progress with total_amount set = nearing completion display)
         jobs_data.append(make_job(cust_sneha, "transmission", "Gear slipping between 2nd and 3rd, transmission fluid dark.",
-                                   "in_progress", *coords[7], assigned_garage=garage_autocare,
+                                   "in_progress", *coords[7], assigned_garage=garage_speedfix,
                                    total_amount=8500, created_offset=timedelta(hours=2)))
 
         # Completed jobs (with payments below)
@@ -244,7 +234,7 @@ async def seed():
 
         # Cancelled job
         jobs_data.append(make_job(cust_rohan, "oil_leak", "Scheduled oil change — customer cancelled.",
-                                   "cancelled", *coords[11], assigned_mech=mech_arjun,
+                                   "cancelled", *coords[11], assigned_mech=mech_prakash,
                                    created_offset=timedelta(hours=3)))
 
         for job in jobs_data:
