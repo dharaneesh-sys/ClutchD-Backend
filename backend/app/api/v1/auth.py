@@ -52,25 +52,28 @@ async def login_route(request: Request, body: LoginRequest, db: DbSession):
     email = body.email.lower().strip()
 
     # Per-email rate limiting: max 5 failed attempts per 15 min window
+    # (skipped if Redis is unavailable — no degradation of core login)
     r = await get_redis()
-    fail_key = f"login_fails:{email}"
-    fail_count = await r.get(fail_key)
-    if fail_count and int(fail_count) >= 5:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many login attempts for this email. Please try again later.",
-        )
+    if r is not None:
+        fail_key = f"login_fails:{email}"
+        fail_count = await r.get(fail_key)
+        if fail_count and int(fail_count) >= 5:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many login attempts for this email. Please try again later.",
+            )
 
     try:
         token, user_payload, user_id = await auth_service.login(db, email, body.password)
     except AuthError as e:
-        # Track failed attempt
-        await r.incr(fail_key)
-        await r.expire(fail_key, 900)
+        if r is not None:
+            await r.incr(fail_key)
+            await r.expire(fail_key, 900)
         raise _auth_exc(e) from e
 
     # Clear failed attempts on success
-    await r.delete(fail_key)
+    if r is not None:
+        await r.delete(fail_key)
 
     refresh = create_refresh_token(user_id)
     response = JSONResponse(content=TokenResponse(token=token, user=user_payload).model_dump())
@@ -172,7 +175,8 @@ async def oauth_state(request: Request):
     """Generate a new OAuth state value and store it in Redis with 5-minute expiry."""
     r = await get_redis()
     state = secrets.token_urlsafe(32)
-    await r.setex(f"oauth_state:{state}", 300, "1")
+    if r is not None:
+        await r.setex(f"oauth_state:{state}", 300, "1")
     logger.debug("Generated OAuth state: %s", state[:8] + "...")
     return {"state": state}
 
@@ -186,13 +190,13 @@ async def oauth_google(request: Request, body: GoogleOAuthRequest, db: DbSession
         raise HTTPException(status_code=400, detail="Missing OAuth state parameter")
 
     r = await get_redis()
-    stored = await r.get(f"oauth_state:{body.state}")
-    if not stored:
-        logger.warning("OAuth state not found or expired: %s", body.state[:8] + "..." if len(body.state) > 8 else body.state)
-        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state parameter")
-
-    # Single-use: delete the state after successful verification
-    await r.delete(f"oauth_state:{body.state}")
+    if r is not None:
+        stored = await r.get(f"oauth_state:{body.state}")
+        if not stored:
+            logger.warning("OAuth state not found or expired: %s", body.state[:8] + "..." if len(body.state) > 8 else body.state)
+            raise HTTPException(status_code=400, detail="Invalid or expired OAuth state parameter")
+        # Single-use: delete the state after successful verification
+        await r.delete(f"oauth_state:{body.state}")
 
     settings = get_settings()
     try:
@@ -273,18 +277,19 @@ async def forgot_password_request(request: Request, body: ForgotPasswordRequest,
     from sqlalchemy import select
     email = body.email.lower()
     
-    # Check per-email rate limit (stored in Redis)
+    # Check per-email rate limit (stored in Redis; skipped if unavailable)
     r = await get_redis()
-    request_key = f"reset_rate:{email}"
-    request_count = await r.get(request_key)
-    if request_count and int(request_count) >= 3:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many password reset requests for this email. Please try again later.",
-        )
-    # Increment and set 1-hour TTL
-    await r.incr(request_key)
-    await r.expire(request_key, 3600)
+    if r is not None:
+        request_key = f"reset_rate:{email}"
+        request_count = await r.get(request_key)
+        if request_count and int(request_count) >= 3:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many password reset requests for this email. Please try again later.",
+            )
+        # Increment and set 1-hour TTL
+        await r.incr(request_key)
+        await r.expire(request_key, 3600)
 
     res = await db.execute(select(User).where(User.email == email))
     user = res.scalar_one_or_none()
@@ -296,11 +301,11 @@ async def forgot_password_request(request: Request, body: ForgotPasswordRequest,
     # Generate alphanumeric reset code (8+ chars, ~238x more combinations than 6-digit)
     code = secrets.token_urlsafe(6)  # 8 chars, mixed case + digits
     
-    # Save to Redis with 10 min (600s) expiry
-    await r.setex(f"reset:{email}", 600, code)
-    
-    # Track failed attempts separately
-    await r.delete(f"reset_attempts:{email}")
+    if r is not None:
+        # Save to Redis with 10 min (600s) expiry
+        await r.setex(f"reset:{email}", 600, code)
+        # Track failed attempts separately
+        await r.delete(f"reset_attempts:{email}")
     
     # Log reset event for debugging (never log the actual code)
     logger.info("Password reset code generated for %s", user.email)
@@ -316,20 +321,23 @@ async def forgot_password_reset(request: Request, body: PasswordResetRequest, db
     
     r = await get_redis()
     
-    # Check for account lockout due to too many failed attempts
+    # Check for account lockout due to too many failed attempts (skipped if Redis unavailable)
     attempts_key = f"reset_attempts:{email}"
-    attempts = await r.get(attempts_key)
-    if attempts and int(attempts) >= 5:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many failed reset attempts. Your account is temporarily locked. Try again later.",
-        )
+    if r is not None:
+        attempts = await r.get(attempts_key)
+        if attempts and int(attempts) >= 5:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed reset attempts. Your account is temporarily locked. Try again later.",
+            )
     
-    stored_code = await r.get(f"reset:{email}")
+        stored_code = await r.get(f"reset:{email}")
+    else:
+        stored_code = None
     
     if not stored_code or stored_code != body.code:
         # Track the failed attempt
-        if stored_code is not None:
+        if r is not None and stored_code is not None:
             await r.incr(attempts_key)
             await r.expire(attempts_key, 3600)
             remaining = 4 - (int(attempts or 0))
@@ -339,7 +347,6 @@ async def forgot_password_reset(request: Request, body: PasswordResetRequest, db
                     detail=f"Invalid reset code. {remaining} attempt(s) remaining before temporary lockout.",
                 )
             else:
-                # Delete the reset code to prevent further attempts
                 await r.delete(f"reset:{email}")
                 raise HTTPException(
                     status_code=429,
@@ -357,8 +364,9 @@ async def forgot_password_reset(request: Request, body: PasswordResetRequest, db
     await db.flush()
     
     # Clean up all reset-related keys
-    await r.delete(f"reset:{email}")
-    await r.delete(attempts_key)
-    await r.delete(f"reset_rate:{email}")
+    if r is not None:
+        await r.delete(f"reset:{email}")
+        await r.delete(attempts_key)
+        await r.delete(f"reset_rate:{email}")
     
     return MessageResponse(message="Password has been successfully updated.")

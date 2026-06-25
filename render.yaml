@@ -36,7 +36,8 @@ services:
     name: clutchd-redis
     plan: free
     ipAllowList:
-      - 0.0.0.0/0
+      - source: 0.0.0.0/0
+        description: Allow all external connections
 
 databases:
   - name: clutchd-db
