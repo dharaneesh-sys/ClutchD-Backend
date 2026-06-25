@@ -1,11 +1,19 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @model_validator(mode="after")
+    def ensure_async_driver(self) -> "Settings":
+        """Auto-add +asyncpg if DATABASE_URL uses postgresql:// scheme."""
+        if self.database_url.startswith("postgresql://"):
+            self.database_url = self.database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return self
 
     app_name: str = "ClutchD API"
     debug: bool = False
