@@ -64,16 +64,19 @@ def _build_external_db_url() -> str | None:
     return new_url
 
 
-async def wait_for_database(max_attempts: int = 40, delay_sec: float = 2.0) -> None:
-    """PostGIS image restarts Postgres after init; healthcheck can pass in a gap — retry until stable."""
+async def wait_for_database(max_attempts: int = 40, delay_sec: float = 2.0) -> bool:
+    """Try to reach the database.  Returns True if reachable, False otherwise."""
     last_err: Exception | None = None
+    from app.db.session import get_resolved_url
+    print(f"DEBUG: DATABASE_URL={os.environ.get('DATABASE_URL', '(unset)')}")
+    print(f"DEBUG: resolved_url={get_resolved_url()}")
     eng = get_engine()
     for attempt in range(1, max_attempts + 1):
         try:
             async with eng.connect() as conn:
                 await conn.execute(text("SELECT 1"))
             print(f"Database reachable (attempt {attempt}).")
-            return
+            return True
         except Exception as e:
             last_err = e
             print(f"Waiting for database... ({attempt}/{max_attempts}) {e!r}")
@@ -81,7 +84,8 @@ async def wait_for_database(max_attempts: int = 40, delay_sec: float = 2.0) -> N
 
     external_url = _build_external_db_url()
     if external_url is None:
-        raise RuntimeError(f"Database not reachable after {max_attempts} attempts") from last_err
+        print(f"Database not reachable after {max_attempts} attempts. Service will start without DB.")
+        return False
 
     print("Internal hostname unreachable — retrying with external .render.com hostname...")
     new_engine = create_async_engine(
@@ -92,7 +96,8 @@ async def wait_for_database(max_attempts: int = 40, delay_sec: float = 2.0) -> N
         async with new_engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
     except Exception as e:
-        raise RuntimeError(f"Database not reachable after {max_attempts} attempts (external fallback also failed)") from e
+        print(f"External fallback also failed: {e}. Service will start without DB.")
+        return False
 
     print("Database reachable via external hostname.")
     from app.db.session import reinit_engine
@@ -103,6 +108,7 @@ async def wait_for_database(max_attempts: int = 40, delay_sec: float = 2.0) -> N
     os.environ["SYNC_DATABASE_URL"] = sync_url
     from app.core.config import get_settings
     get_settings.cache_clear()
+    return True
 
 
 async def run_migrations() -> None:
@@ -220,10 +226,13 @@ async def seed() -> None:
 
 
 async def main() -> None:
-    await wait_for_database()
-    await create_schema()
-    await run_migrations()
-    await seed()
+    db_ok = await wait_for_database()
+    if db_ok:
+        await create_schema()
+        await run_migrations()
+        await seed()
+    else:
+        print("WARNING: Database unavailable. Service will start without DB tables and seed data.")
 
 
 if __name__ == "__main__":

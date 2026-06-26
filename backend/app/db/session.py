@@ -61,6 +61,10 @@ def _init_engine():
     _SessionLocal = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
 
 
+def get_resolved_url() -> str | None:
+    return _resolved_url
+
+
 def get_engine():
     _init_engine()
     return _engine
