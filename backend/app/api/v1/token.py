@@ -76,7 +76,7 @@ def set_refresh_cookie(response: Response, refresh_token: str) -> None:
         value=refresh_token,
         httponly=True,
         secure=is_secure,
-        samesite="lax",
+        samesite="none",
         max_age=max_age,
         path="/",
     )
@@ -91,7 +91,7 @@ def clear_refresh_cookie(response: Response) -> None:
 
 
 def set_access_token_cookie(response: Response, token: str) -> None:
-    """Set the access token as an httpOnly, Secure, SameSite=Strict cookie."""
+    """Set the access token as an httpOnly, Secure, SameSite=None cookie (cross-origin Capacitor WebView)."""
     settings = get_settings()
     response.set_cookie(
         key=settings.access_token_cookie_name,
