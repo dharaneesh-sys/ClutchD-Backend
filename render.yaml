@@ -24,7 +24,7 @@ services:
       - key: JWT_SECRET_KEY
         generateValue: true
       - key: CORS_ORIGINS
-        value: http://localhost:3000,https://clutchd-app.onrender.com
+        value: http://localhost:3000,http://localhost:3000,https://clutchd-app.onrender.com,capacitor://localhost,http://localhost,https://localhost
       - key: DEBUG
         value: "false"
       - key: PYTHONPATH

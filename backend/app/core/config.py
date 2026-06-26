@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     default_map_lat: float = 11.0168
     default_map_lon: float = 76.9558
 
-    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,capacitor://localhost,http://localhost,https://localhost"
 
     google_oauth_client_id: str | None = None
     google_oauth_client_secret: str | None = None
