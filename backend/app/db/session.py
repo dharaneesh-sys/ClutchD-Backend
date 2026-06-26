@@ -11,12 +11,14 @@ def _resolve_db_url(raw_url: str) -> str:
     """Convert Render internal DB hostname to external if needed.
 
     Render's ``fromDatabase`` connectionString uses an internal hostname
-    such as ``dpg-xxxxx.internal`` which is unreachable on the free plan
-    (no private networking).  This converts it to the public equivalent.
+    (e.g. ``postgres://user:pass@dpg-xxxxx.internal:5432/db`` or
+    ``postgres://user:pass@dpg-xxxxx:5432/db``) which is unreachable
+    on the free plan (no private networking).  This converts it to the
+    public equivalent using the region suffix.
     """
     parsed = urlparse(raw_url)
     host = parsed.hostname or ""
-    if "render.com" in host or ".internal" not in host:
+    if "render.com" in host:
         return raw_url
     dpg_id = host.split(".")[0]
     region = os.environ.get("RENDER_INSTANCE_REGION", "oregon")
