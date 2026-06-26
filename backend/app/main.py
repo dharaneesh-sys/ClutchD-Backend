@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from http import HTTPStatus
@@ -165,6 +166,9 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+
 
 
 async def _authenticate_ws(websocket: WebSocket) -> User | None:
