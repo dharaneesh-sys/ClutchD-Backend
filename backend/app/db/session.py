@@ -7,19 +7,22 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.config import get_settings
 
 
-def _resolve_db_url(raw_url: str) -> str:
-    """Convert Render internal DB hostname to external if needed.
+def _ensure_async_scheme(url: str) -> str:
+    if url.startswith("postgresql+asyncpg://"):
+        return url
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return url
 
-    Render's ``fromDatabase`` connectionString uses an internal hostname
-    (e.g. ``postgres://user:pass@dpg-xxxxx.internal:5432/db`` or
-    ``postgres://user:pass@dpg-xxxxx:5432/db``) which is unreachable
-    on the free plan (no private networking).  This converts it to the
-    public equivalent using the region suffix.
-    """
+
+def _resolve_db_url(raw_url: str) -> str:
+    """Convert Render internal DB hostname to external, ensure async scheme."""
     parsed = urlparse(raw_url)
     host = parsed.hostname or ""
-    if "render.com" in host:
-        return raw_url
+    if "render.com" in host or not host:
+        return _ensure_async_scheme(raw_url)
     dpg_id = host.split(".")[0]
     region = os.environ.get("RENDER_INSTANCE_REGION", "oregon")
     external_host = f"{dpg_id}.{region}-postgres.render.com"
@@ -31,28 +34,64 @@ def _resolve_db_url(raw_url: str) -> str:
     else:
         netloc = f"{external_host}:{port}"
     new_url = urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
-    if new_url.startswith("postgresql://"):
-        new_url = new_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    return new_url
+    return _ensure_async_scheme(new_url)
 
 
-settings = get_settings()
-resolved_url = _resolve_db_url(settings.database_url)
-engine = create_async_engine(
-    resolved_url,
-    echo=settings.debug,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-    pool_recycle=300,
-    pool_timeout=30,
-    connect_args={"server_settings": {"statement_timeout": "30000"}},  # 30s max query time
-)
-AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
+_resolved_url: str | None = None
+_engine = None
+_SessionLocal = None
+
+
+def _init_engine():
+    global _resolved_url, _engine, _SessionLocal
+    if _engine is not None:
+        return
+    settings = get_settings()
+    _resolved_url = _resolve_db_url(settings.database_url)
+    _engine = create_async_engine(
+        _resolved_url,
+        echo=settings.debug,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+        pool_recycle=300,
+        pool_timeout=10,
+        connect_args={"server_settings": {"statement_timeout": "30000"}},
+    )
+    _SessionLocal = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
+
+
+def get_engine():
+    _init_engine()
+    return _engine
+
+
+def reinit_engine(url: str | None = None):
+    """Force-reinitialize the engine, optionally with a different URL."""
+    global _resolved_url, _engine, _SessionLocal
+    settings = get_settings()
+    _resolved_url = url if url else _resolve_db_url(settings.database_url)
+    _engine = create_async_engine(
+        _resolved_url,
+        echo=settings.debug,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+        pool_recycle=300,
+        pool_timeout=10,
+        connect_args={"server_settings": {"statement_timeout": "30000"}},
+    )
+    _SessionLocal = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
+
+
+def get_session_local():
+    _init_engine()
+    return _SessionLocal
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    async with AsyncSessionLocal() as session:
+    session_local = get_session_local()
+    async with session_local() as session:
         try:
             yield session
             await session.commit()

@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.core.security import hash_password
 from app.db.base import Base
-from app.db.session import AsyncSessionLocal, engine
+from app.db.session import get_engine, get_session_local
 from app.models.garage import Garage
 from app.models.mechanic import Mechanic
 from app.models.user import User
@@ -66,11 +66,11 @@ def _build_external_db_url() -> str | None:
 
 async def wait_for_database(max_attempts: int = 40, delay_sec: float = 2.0) -> None:
     """PostGIS image restarts Postgres after init; healthcheck can pass in a gap — retry until stable."""
-    global engine, AsyncSessionLocal
     last_err: Exception | None = None
+    eng = get_engine()
     for attempt in range(1, max_attempts + 1):
         try:
-            async with engine.connect() as conn:
+            async with eng.connect() as conn:
                 await conn.execute(text("SELECT 1"))
             print(f"Database reachable (attempt {attempt}).")
             return
@@ -95,8 +95,8 @@ async def wait_for_database(max_attempts: int = 40, delay_sec: float = 2.0) -> N
         raise RuntimeError(f"Database not reachable after {max_attempts} attempts (external fallback also failed)") from e
 
     print("Database reachable via external hostname.")
-    engine = new_engine
-    AsyncSessionLocal = async_sessionmaker(new_engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
+    from app.db.session import reinit_engine
+    reinit_engine(external_url)
 
     sync_url = external_url.replace("postgresql+asyncpg://", "postgresql://", 1)
     os.environ["DATABASE_URL"] = external_url
@@ -127,8 +127,9 @@ async def run_migrations() -> None:
 
 async def create_schema() -> None:
     import app.models  # noqa: F401 — register mappers
+    eng = get_engine()
 
-    async with engine.begin() as conn:
+    async with eng.begin() as conn:
         try:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
         except Exception:
@@ -160,8 +161,9 @@ async def get_or_create_user(session, email, password, role, is_superuser=False)
 
 async def seed() -> None:
     import app.models  # noqa: F401
+    SessionLocal = get_session_local()
 
-    async with AsyncSessionLocal() as session:
+    async with SessionLocal() as session:
         # 1. Admin (Multiple variations to handle frontend validation and typos)
         await get_or_create_user(session, "admin21907.com", "clutchD123", "admin", True)
         await get_or_create_user(session, "admin@21907.com", "clutchD123", "admin", True)
