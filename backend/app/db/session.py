@@ -93,6 +93,20 @@ def get_session_local():
     return _SessionLocal
 
 
+class _LazySessionLocal:
+    """Lazy proxy so ``from app.db.session import AsyncSessionLocal`` works.
+
+    ``async with AsyncSessionLocal() as db:`` creates a session via the
+    lazily-initialized sessionmaker, then enters its async context manager.
+    """
+    def __call__(self):
+        maker = get_session_local()
+        return maker()
+
+
+AsyncSessionLocal: _LazySessionLocal = _LazySessionLocal()
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     session_local = get_session_local()
     async with session_local() as session:
