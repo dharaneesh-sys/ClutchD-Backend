@@ -47,9 +47,9 @@ class Settings(BaseSettings):
     upload_dir: str = "uploads"
     max_upload_mb: int = 10
 
-    # Access token cookie settings (httpOnly, Secure, SameSite=Strict)
+    # Access token cookie settings (httpOnly, Secure, SameSite=None for cross-origin Capacitor WebView)
     access_token_cookie_name: str = "access_token"
-    access_token_cookie_samesite: str = "strict"
+    access_token_cookie_samesite: str = "none"
     access_token_cookie_max_age: int = 900  # 15 minutes in seconds
 
     rate_limit_auth: str = "20/minute"
