@@ -2,6 +2,16 @@ from app.models.audit_log import AuditLog
 from app.models.dispute import Dispute
 from app.models.garage import Garage, GarageMechanic
 from app.models.job import Job
+from app.models.marketplace import (
+    MarketplaceCartItem,
+    MarketplaceCategory,
+    MarketplaceOffer,
+    MarketplaceOrder,
+    MarketplaceOrderItem,
+    MarketplaceProduct,
+    MarketplaceProductReview,
+    MarketplaceVendor,
+)
 from app.models.mechanic import Mechanic
 from app.models.notification import Notification
 from app.models.payment import Payment
@@ -21,4 +31,12 @@ __all__ = [
     "AuditLog",
     "Vehicle",
     "Notification",
+    "MarketplaceCategory",
+    "MarketplaceProduct",
+    "MarketplaceVendor",
+    "MarketplaceOffer",
+    "MarketplaceCartItem",
+    "MarketplaceOrder",
+    "MarketplaceOrderItem",
+    "MarketplaceProductReview",
 ]

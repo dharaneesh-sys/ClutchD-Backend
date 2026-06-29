@@ -123,10 +123,8 @@ async def run_migrations() -> None:
     alembic_cfg.set_main_option("sqlalchemy.url", settings.database_url)
     
     print("Running migrations...")
-    # alembic.command is synchronous, but we are in an async loop. 
+    # alembic.command is synchronous, but we are in an async loop.
     # For a simple bootstrap script, we can run it in a thread or just run it synchronously.
-    # Since this is a one-time startup script, simple synchronous call is fine or await to_thread.
-    import asyncio
     await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
     print("Migrations complete.")
 
@@ -142,9 +140,6 @@ async def create_schema() -> None:
             logger.warning("PostGIS extension not available — spatial queries will use Python fallback")
         await conn.run_sync(Base.metadata.create_all)
 
-
-async def seed() -> None:
-    import app.models  # noqa: F401
 
 async def get_or_create_user(session, email, password, role, is_superuser=False):
     from sqlalchemy.exc import IntegrityError
@@ -223,6 +218,167 @@ async def seed() -> None:
         print("  mechanic@demo.com / demo123456")
         print("  garage@demo.com / demo123456")
         print("  customer@demo.com / demo123456")
+
+        # ---- Marketplace seed ----
+        await seed_marketplace(session)
+
+
+async def seed_marketplace(session):
+    from app.models.marketplace import (
+        MarketplaceCategory,
+        MarketplaceOffer,
+        MarketplaceProduct,
+        MarketplaceVendor,
+    )
+    from sqlalchemy.exc import IntegrityError
+
+    # ── Categories ─────────────────────────────────────────────────────
+    categories_data = [
+        {"slug": "engine-parts", "name": "Engine Parts", "description": "Pistons, rings, gaskets, timing belts, and other engine components", "image": "/images/categories/engine.jpg", "product_count": 24},
+        {"slug": "brake-parts", "name": "Brake Parts", "description": "Brake pads, discs, calipers, and brake fluid", "image": "/images/categories/brakes.jpg", "product_count": 18},
+        {"slug": "electrical", "name": "Electrical Components", "description": "Spark plugs, batteries, alternators, and wiring harnesses", "image": "/images/categories/electrical.jpg", "product_count": 32},
+        {"slug": "suspension", "name": "Suspension Parts", "description": "Shock absorbers, struts, springs, and bushings", "image": "/images/categories/suspension.jpg", "product_count": 15},
+        {"slug": "filters", "name": "Filters", "description": "Oil filters, air filters, fuel filters, and cabin filters", "image": "/images/categories/filters.jpg", "product_count": 12},
+        {"slug": "accessories", "name": "Accessories", "description": "Car care products, floor mats, covers, and interior accessories", "image": "/images/categories/accessories.jpg", "product_count": 35},
+    ]
+
+    category_map = {}
+    for cd in categories_data:
+        r = await session.execute(select(MarketplaceCategory).where(MarketplaceCategory.slug == cd["slug"]))
+        cat = r.scalar_one_or_none()
+        if not cat:
+            cat = MarketplaceCategory(**cd)
+            session.add(cat)
+            await session.flush()
+        category_map[cd["slug"]] = cat.id
+
+    # ── Vendors ────────────────────────────────────────────────────────
+    vendors_data = [
+        {"name": "Auto Parts Co.", "description": "Leading supplier of automotive engine and suspension parts"},
+        {"name": "Brake World", "description": "Specialists in braking systems and components"},
+        {"name": "Spark Gears", "description": "Premium electrical and ignition components"},
+        {"name": "Battery Hub", "description": "Wide range of automotive batteries"},
+        {"name": "FilterPro", "description": "High-quality filtration solutions for all vehicles"},
+    ]
+
+    vendor_map = {}
+    for vd in vendors_data:
+        r = await session.execute(select(MarketplaceVendor).where(MarketplaceVendor.name == vd["name"]))
+        vendor = r.scalar_one_or_none()
+        if not vendor:
+            vendor = MarketplaceVendor(**vd)
+            session.add(vendor)
+            await session.flush()
+        vendor_map[vd["name"]] = vendor.id
+
+    # ── Products ───────────────────────────────────────────────────────
+    products_data = [
+        {"name": "Engine Piston Ring Set", "description": "High-quality piston ring set for 4-cylinder engines", "brand": "Bosch", "vendor_name": "Auto Parts Co.", "price": 899, "rating": 4.5, "image": "/images/products/engine-piston.jpg", "category_slug": "engine-parts", "delivery_time": "2-3 days"},
+        {"name": "Timing Belt Kit", "description": "Complete timing belt kit with tensioner for reliable timing", "brand": "MICO", "vendor_name": "Auto Parts Co.", "price": 1450, "rating": 4.7, "image": "/images/products/timing-belt.jpg", "category_slug": "engine-parts", "delivery_time": "2-3 days"},
+        {"name": "Cylinder Head Gasket Set", "description": "Premium cylinder head gasket set for superior engine sealing", "brand": "TVS", "vendor_name": "Auto Parts Co.", "price": 2350, "rating": 4.3, "image": "/images/products/head-gasket.jpg", "category_slug": "engine-parts", "delivery_time": "3-5 days"},
+        {"name": "Brake Pad Set (Ceramic)", "description": "Ceramic brake pads for quiet, low-dust stopping power", "brand": "Bosch", "vendor_name": "Brake World", "price": 1299, "rating": 4.8, "image": "/images/products/brake-pads.jpg", "category_slug": "brake-parts", "delivery_time": "1-2 days"},
+        {"name": "Brake Disc Rotor (Vented)", "description": "Vented brake disc rotor for improved heat dissipation", "brand": "Valeo", "vendor_name": "Brake World", "price": 1899, "rating": 4.6, "image": "/images/products/brake-disc.jpg", "category_slug": "brake-parts", "delivery_time": "1-2 days"},
+        {"name": "Brake Caliper Assembly", "description": "Complete brake caliper assembly with mounting hardware", "brand": "Denso", "vendor_name": "Brake World", "price": 3499, "rating": 4.4, "image": "/images/products/brake-caliper.jpg", "category_slug": "brake-parts", "delivery_time": "2-3 days"},
+        {"name": "Spark Plug Iridium (Set of 4)", "description": "Iridium spark plugs for better ignition and fuel efficiency", "brand": "NGK", "vendor_name": "Spark Gears", "price": 599, "rating": 4.6, "image": "/images/products/spark-plugs.jpg", "category_slug": "electrical", "delivery_time": "1-2 days"},
+        {"name": "Battery 12V 40Ah (Maintenance Free)", "description": "Maintenance-free 12V battery with long service life", "brand": "MICO", "vendor_name": "Battery Hub", "price": 3899, "rating": 4.7, "image": "/images/products/car-battery.jpg", "category_slug": "electrical", "delivery_time": "Same day"},
+        {"name": "Alternator Assembly 90A", "description": "90-amp alternator assembly for reliable electrical charging", "brand": "Denso", "vendor_name": "Spark Gears", "price": 5299, "rating": 4.5, "image": "/images/products/alternator.jpg", "category_slug": "electrical", "delivery_time": "2-3 days"},
+        {"name": "Shock Absorber Set (Front Pair)", "description": "Front pair shock absorbers for smooth ride control", "brand": "Bosch", "vendor_name": "Auto Parts Co.", "price": 2799, "rating": 4.3, "image": "/images/products/shock-absorber.jpg", "category_slug": "suspension", "delivery_time": "2-3 days"},
+        {"name": "Coil Spring Kit (Rear)", "description": "Rear coil spring kit for improved load handling and stability", "brand": "TVS", "vendor_name": "Auto Parts Co.", "price": 3599, "rating": 4.4, "image": "/images/products/coil-spring.jpg", "category_slug": "suspension", "delivery_time": "3-5 days"},
+        {"name": "Suspension Control Arm (Front Lower)", "description": "Front lower control arm with premium bushings installed", "brand": "Bosch", "vendor_name": "Auto Parts Co.", "price": 4299, "rating": 4.2, "image": "/images/products/control-arm.jpg", "category_slug": "suspension", "delivery_time": "2-3 days"},
+        {"name": "Oil Filter F-101", "description": "High-flow oil filter with anti-drainback valve protection", "brand": "MICO", "vendor_name": "Auto Parts Co.", "price": 299, "rating": 4.5, "image": "/images/products/oil-filter.jpg", "category_slug": "filters", "delivery_time": "1-2 days"},
+        {"name": "Air Filter Element (Panel Type)", "description": "Panel-type air filter for optimal engine airflow filtration", "brand": "Valeo", "vendor_name": "Auto Parts Co.", "price": 449, "rating": 4.3, "image": "/images/products/air-filter.jpg", "category_slug": "filters", "delivery_time": "2-3 days"},
+        {"name": "Cabin Filter (Activated Carbon)", "description": "Activated carbon cabin filter for fresh interior air quality", "brand": "Valeo", "vendor_name": "Auto Parts Co.", "price": 549, "rating": 4.4, "image": "/images/products/cabin-filter.jpg", "category_slug": "filters", "delivery_time": "2-3 days"},
+        {"name": "Car Floor Mat Set (TPE)", "description": "TPE floor mat set with anti-slip backing for all-weather use", "brand": "TVS", "vendor_name": "Auto Parts Co.", "price": 1199, "rating": 4.6, "image": "/images/products/floor-mats.jpg", "category_slug": "accessories", "delivery_time": "1-2 days"},
+        {"name": "Seat Cover Set (Leatherette)", "description": "Leatherette seat cover set with universal fit for most cars", "brand": "TVS", "vendor_name": "Auto Parts Co.", "price": 2499, "rating": 4.5, "image": "/images/products/seat-covers.jpg", "category_slug": "accessories", "delivery_time": "2-3 days"},
+        {"name": "Windshield Sun Shade (Foldable)", "description": "Foldable windshield sun shade protects interior from UV rays", "brand": "TVS", "vendor_name": "Auto Parts Co.", "price": 449, "rating": 4.2, "image": "/images/products/sun-shade.jpg", "category_slug": "accessories", "delivery_time": "1-2 days"},
+    ]
+
+    for pd in products_data:
+        r = await session.execute(
+            select(MarketplaceProduct).where(
+                MarketplaceProduct.name == pd["name"],
+                MarketplaceProduct.brand == pd["brand"],
+            )
+        )
+        existing = r.scalar_one_or_none()
+        if existing:
+            continue
+        product = MarketplaceProduct(
+            name=pd["name"],
+            description=pd["description"],
+            brand=pd["brand"],
+            vendor_id=vendor_map.get(pd["vendor_name"]),
+            vendor=pd["vendor_name"],
+            price=pd["price"],
+            rating=pd["rating"],
+            image=pd["image"],
+            category_id=category_map.get(pd["category_slug"]),
+            category=pd["category_slug"],
+            availability=True,
+            delivery_time=pd["delivery_time"],
+        )
+        session.add(product)
+
+    # ── Offers ─────────────────────────────────────────────────────────
+    offers_data = [
+        {"code": "WELCOME15", "title": "New User Welcome", "description": "Get 15% off on your first purchase of auto parts. Minimum order of ₹500.", "discount_percent": 15, "min_purchase": 500},
+        {"code": "FESTIVE10", "title": "Festive Season Special", "description": "Flat 10% discount on all engine parts and filters.", "discount_percent": 10, "min_purchase": 1000},
+        {"code": "BRAKE20", "title": "Brake Service Bundle", "description": "Special 20% off on brake pads and disc rotors when bought together.", "discount_percent": 20, "min_purchase": 1500},
+        {"code": "FREEDEL", "title": "Free Delivery Promo", "description": "Get ₹200 instant discount on orders above ₹2000.", "discount_amount": 200, "min_purchase": 2000},
+        {"code": "FLASH25", "title": "Weekend Flash Sale", "description": "Extra 25% off on selected electrical components.", "discount_percent": 25, "min_purchase": 750},
+    ]
+
+    for od in offers_data:
+        r = await session.execute(select(MarketplaceOffer).where(MarketplaceOffer.code == od["code"]))
+        existing = r.scalar_one_or_none()
+        if not existing:
+            offer = MarketplaceOffer(
+                code=od["code"],
+                title=od["title"],
+                description=od["description"],
+                discount_percent=od.get("discount_percent", 0),
+                discount_amount=od.get("discount_amount", 0),
+                min_purchase=od.get("min_purchase", 0),
+                active=True,
+            )
+            session.add(offer)
+
+    # ── Product Reviews (sample) ────────────────────────────────────────
+    from app.models.marketplace import MarketplaceProductReview
+    import random
+
+    # Get product IDs
+    prod_result = await session.execute(select(MarketplaceProduct).limit(5))
+    sample_products = prod_result.scalars().all()
+    sample_reviews_data = [
+        {"rating": 5, "text": "Excellent product! Fit perfectly on my car. Highly recommended.", "user_name": "Rajesh K"},
+        {"rating": 4, "text": "Good quality for the price. Delivery was faster than expected.", "user_name": "Priya S"},
+        {"rating": 5, "text": "Original branded product with great packaging. Will buy again.", "user_name": "Amit S"},
+        {"rating": 4, "text": "Works as described. The fitment was exact and no issues.", "user_name": "Divya R"},
+        {"rating": 3, "text": "Decent product but took longer to deliver than mentioned.", "user_name": "Vikram P"},
+    ]
+
+    for sp in sample_products:
+        for rd in sample_reviews_data:
+            r = await session.execute(
+                select(MarketplaceProductReview).where(
+                    MarketplaceProductReview.product_id == sp.id,
+                    MarketplaceProductReview.user_name == rd["user_name"],
+                )
+            )
+            existing = r.scalar_one_or_none()
+            if not existing:
+                review = MarketplaceProductReview(
+                    product_id=sp.id,
+                    user_name=rd["user_name"],
+                    rating=rd["rating"],
+                    text=rd["text"],
+                    verified=True,
+                )
+                session.add(review)
+
+    await session.commit()
+    print(f"Seeded marketplace: {len(categories_data)} categories, {len(vendors_data)} vendors, {len(products_data)} products, {len(offers_data)} offers, {len(sample_products) * len(sample_reviews_data)} reviews")
 
 
 async def main() -> None:
