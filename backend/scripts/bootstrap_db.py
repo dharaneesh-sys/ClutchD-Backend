@@ -345,7 +345,6 @@ async def seed_marketplace(session):
 
     # ── Product Reviews (sample) ────────────────────────────────────────
     from app.models.marketplace import MarketplaceProductReview
-    import random
 
     # Get product IDs
     prod_result = await session.execute(select(MarketplaceProduct).limit(5))
