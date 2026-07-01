@@ -27,3 +27,5 @@ class User(Base):
     jobs: Mapped[list["Job"]] = relationship("Job", back_populates="customer")
     vehicles: Mapped[list["Vehicle"]] = relationship("Vehicle")
     notifications: Mapped[list["Notification"]] = relationship("Notification")
+    favorites: Mapped[list["UserFavorite"]] = relationship("UserFavorite", back_populates="user", cascade="all, delete-orphan")
+    clutchd_card: Mapped["ClutchDCard | None"] = relationship("ClutchDCard", back_populates="user", uselist=False, cascade="all, delete-orphan")

@@ -14,11 +14,14 @@ from app.models.marketplace import (
 )
 from app.models.mechanic import Mechanic
 from app.models.new_models import (
+    ClutchDCard,
+    ClutchDOffer,
     CustomerProfile,
     FAQ,
     ReferralCode,
     ReferralReward,
     SupportTicket,
+    UserFavorite,
     UserSettings,
 )
 from app.models.notification import Notification
@@ -45,6 +48,9 @@ __all__ = [
     "SupportTicket",
     "FAQ",
     "UserSettings",
+    "UserFavorite",
+    "ClutchDCard",
+    "ClutchDOffer",
     "MarketplaceCategory",
     "MarketplaceProduct",
     "MarketplaceVendor",
