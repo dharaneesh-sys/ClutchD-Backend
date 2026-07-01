@@ -46,18 +46,6 @@ def _auth_exc(e: AuthError) -> HTTPException:
     return HTTPException(status_code=e.code, detail=e.message)
 
 
-@router.get("/diag")
-async def diag(request: Request, db: DbSession):
-    """Minimal diagnostic — just trigger mapper config and catch errors."""
-    from sqlalchemy.orm import configure_mappers
-    try:
-        configure_mappers()
-        return {"status": "mappers_ok"}
-    except Exception as e:
-        return {"status": "error", "type": type(e).__name__, "msg": str(e)}
-
-
-
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("30/minute")
 async def login_route(request: Request, body: LoginRequest, db: DbSession):

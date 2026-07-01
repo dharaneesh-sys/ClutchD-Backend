@@ -120,7 +120,8 @@ class MarketplaceOrder(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     items: Mapped[list["MarketplaceOrderItem"]] = relationship(
-        "MarketplaceOrderItem", back_populates="order", cascade="all, delete-orphan"
+        "MarketplaceOrderItem", back_populates="order", cascade="all, delete-orphan",
+        foreign_keys="MarketplaceOrderItem.order_id",
     )
 
 
@@ -128,10 +129,11 @@ class MarketplaceOrderItem(Base):
     __tablename__ = "marketplace_order_items"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("marketplace_orders.id"), nullable=False)
     product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
 
-    order: Mapped["MarketplaceOrder"] = relationship("MarketplaceOrder", back_populates="items")
+    order: Mapped["MarketplaceOrder"] = relationship("MarketplaceOrder", back_populates="items",
+        foreign_keys="MarketplaceOrderItem.order_id")
