@@ -46,6 +46,25 @@ def _auth_exc(e: AuthError) -> HTTPException:
     return HTTPException(status_code=e.code, detail=e.message)
 
 
+# ── Diagnostic endpoints (remove after debugging) ──────────────
+@router.get("/ping")
+async def ping():
+    return {"status": "pong"}
+
+
+@router.get("/ping-limited")
+@limiter.limit("30/minute")
+async def ping_limited(request: Request):
+    return {"status": "pong-limited"}
+
+
+@router.post("/login-test")
+async def login_test(request: Request, body: LoginRequest, db: DbSession):
+    email = body.email.lower().strip()
+    return {"email": email, "status": "login-test ok"}
+# ── End diagnostic endpoints ───────────────────────────────────
+
+
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("30/minute")
 async def login_route(request: Request, body: LoginRequest, db: DbSession):
