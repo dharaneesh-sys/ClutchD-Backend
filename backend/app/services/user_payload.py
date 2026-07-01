@@ -4,6 +4,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.garage import Garage
 from app.models.mechanic import Mechanic
+from app.models.new_models import CustomerProfile
 from app.models.user import User
 
 
@@ -14,8 +15,16 @@ async def user_to_frontend_dict(db: AsyncSession, user: User) -> dict:
         "role": user.role,
     }
     if user.role == "customer":
-        local = user.email.split("@")[0]
-        base["name"] = local.replace(".", " ").title()
+        r = await db.execute(select(CustomerProfile).where(CustomerProfile.user_id == user.id))
+        cp = r.scalar_one_or_none()
+        if cp and cp.full_name:
+            base["name"] = cp.full_name
+            base["phone"] = cp.phone
+            base["address"] = cp.address
+            base["profile_photo_url"] = cp.profile_photo_url
+        else:
+            local = user.email.split("@")[0]
+            base["name"] = local.replace(".", " ").title()
         return base
 
     if user.role == "mechanic":
@@ -63,7 +72,7 @@ async def user_to_frontend_dict(db: AsyncSession, user: User) -> dict:
 async def load_user_with_profile(db: AsyncSession, user_id):
     r = await db.execute(
         select(User)
-        .options(selectinload(User.mechanic_profile), selectinload(User.garage_profile))
+        .options(selectinload(User.mechanic_profile), selectinload(User.garage_profile), selectinload(User.customer_profile))
         .where(User.id == user_id)
     )
     return r.scalar_one_or_none()
