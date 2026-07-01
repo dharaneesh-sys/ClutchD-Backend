@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import admin, auth, garage_routes, jobs, marketplace, matching_routes, notifications, payments, providers, reviews, service, uploads, vehicles
+from app.api.v1 import admin, auth, faq, garage_routes, jobs, marketplace, matching_routes, notifications, payments, profile, providers, referral, reviews, safety, service, settings, tickets, uploads, vehicles
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
@@ -15,3 +15,9 @@ api_router.include_router(uploads.router)
 api_router.include_router(vehicles.router)
 api_router.include_router(notifications.router)
 api_router.include_router(marketplace.router)
+api_router.include_router(profile.router)
+api_router.include_router(referral.router)
+api_router.include_router(tickets.router)
+api_router.include_router(faq.router)
+api_router.include_router(settings.router)
+api_router.include_router(safety.router)
