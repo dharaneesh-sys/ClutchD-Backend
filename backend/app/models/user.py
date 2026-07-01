@@ -21,6 +21,7 @@ class User(Base):
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    customer_profile: Mapped["CustomerProfile | None"] = relationship("CustomerProfile", back_populates="user", uselist=False)
     mechanic_profile: Mapped["Mechanic | None"] = relationship("Mechanic", back_populates="user", uselist=False)
     garage_profile: Mapped["Garage | None"] = relationship("Garage", back_populates="user", uselist=False)
     jobs: Mapped[list["Job"]] = relationship("Job", back_populates="customer")

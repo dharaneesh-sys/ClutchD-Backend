@@ -13,6 +13,14 @@ from app.models.marketplace import (
     MarketplaceVendor,
 )
 from app.models.mechanic import Mechanic
+from app.models.new_models import (
+    CustomerProfile,
+    FAQ,
+    ReferralCode,
+    ReferralReward,
+    SupportTicket,
+    UserSettings,
+)
 from app.models.notification import Notification
 from app.models.payment import Payment
 from app.models.review import Review
@@ -21,6 +29,7 @@ from app.models.vehicle import Vehicle
 
 __all__ = [
     "User",
+    "CustomerProfile",
     "Mechanic",
     "Garage",
     "GarageMechanic",
@@ -31,6 +40,11 @@ __all__ = [
     "AuditLog",
     "Vehicle",
     "Notification",
+    "ReferralCode",
+    "ReferralReward",
+    "SupportTicket",
+    "FAQ",
+    "UserSettings",
     "MarketplaceCategory",
     "MarketplaceProduct",
     "MarketplaceVendor",
