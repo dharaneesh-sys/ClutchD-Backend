@@ -62,6 +62,40 @@ async def ping_limited(request: Request):
 async def login_test(request: Request, body: LoginRequest, db: DbSession):
     email = body.email.lower().strip()
     return {"email": email, "status": "login-test ok"}
+
+
+@router.post("/login-diag")
+@limiter.limit("30/minute")
+async def login_diag(request: Request, body: LoginRequest, db: DbSession):
+    """Step-by-step diagnostic that mirrors login_route logic."""
+    result: dict[str, str] = {"steps": {}}
+    try:
+        email = body.email.lower().strip()
+        result["steps"]["email"] = "ok"
+    except Exception as e:
+        result["steps"]["email"] = f"FAIL: {e}"
+    try:
+        r = await get_redis()
+        result["steps"]["redis"] = f"ok (client={'connected' if r else 'none'})"
+    except Exception as e:
+        result["steps"]["redis"] = f"FAIL: {e}"
+    try:
+        token, user_payload, user_id = await auth_service.login(db, email, body.password)
+        result["steps"]["auth_service_login"] = "ok"
+    except Exception as e:
+        result["steps"]["auth_service_login"] = f"FAIL({type(e).__name__}): {e}"
+    try:
+        refresh = create_refresh_token(user_id)
+        result["steps"]["create_refresh_token"] = "ok"
+    except Exception as e:
+        result["steps"]["create_refresh_token"] = f"FAIL: {e}"
+    try:
+        resp = JSONResponse(content=TokenResponse(token=token, user=user_payload).model_dump())
+        result["steps"]["json_response"] = "ok"
+    except Exception as e:
+        result["steps"]["json_response"] = f"FAIL: {e}"
+    result["summary"] = "diag complete"
+    return result
 # ── End diagnostic endpoints ───────────────────────────────────
 
 
