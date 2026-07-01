@@ -203,7 +203,7 @@ async def oauth_google(request: Request, body: GoogleOAuthRequest, db: DbSession
         async with httpx.AsyncClient() as client:
             r = await client.get(
                 "https://oauth2.googleapis.com/tokeninfo",
-                params={"id_token": body.id_token},
+                params={"id_token": body.credential},
                 timeout=15.0,
             )
             if r.status_code != 200:
