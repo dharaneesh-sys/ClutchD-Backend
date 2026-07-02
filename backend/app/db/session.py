@@ -18,10 +18,14 @@ def _ensure_async_scheme(url: str) -> str:
 
 
 def _resolve_db_url(raw_url: str) -> str:
-    """Convert Render internal DB hostname to external, ensure async scheme."""
+    """Convert Render internal DB hostname to external, ensure async scheme.
+
+    Only Rewrites hostnames that follow Render's internal ``dpg-xxxxx``
+    pattern — third-party databases (Neon, etc.) are passed through unchanged.
+    """
     parsed = urlparse(raw_url)
     host = parsed.hostname or ""
-    if "render.com" in host or not host:
+    if "render.com" in host or not host or not host.startswith("dpg-"):
         return _ensure_async_scheme(raw_url)
     dpg_id = host.split(".")[0]
     region = os.environ.get("RENDER_INSTANCE_REGION", "oregon")

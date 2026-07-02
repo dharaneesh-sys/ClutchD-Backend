@@ -31,6 +31,9 @@ def _build_external_db_url() -> str | None:
     networking).  This helper converts it to the public equivalent using the
     region suffix.
 
+    Only rewrites hostnames starting with ``dpg-`` — third-party databases
+    (Neon, etc.) are passed through unchanged.
+
     Returns the new URL (with ``+asyncpg`` driver) or ``None`` if no conversion
     is needed.
     """
@@ -41,7 +44,7 @@ def _build_external_db_url() -> str | None:
     parsed = urlparse(url)
     host = parsed.hostname or ""
 
-    if "render.com" in host:
+    if "render.com" in host or not host.startswith("dpg-"):
         return None
 
     dpg_id = host.split(".")[0]
