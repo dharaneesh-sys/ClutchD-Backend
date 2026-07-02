@@ -12,7 +12,7 @@ from app.core.limiter import limiter
 from app.models.enums import UserRole
 from app.models.job import Job
 from app.models.user import User
-from app.schemas.job import JobAssignRequest, ServiceRequestCreate
+from app.schemas.job import JobAssignRequest, PathJobAssignRequest, ServiceRequestCreate
 from app.services import job_service
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -33,6 +33,32 @@ async def jobs_create(request: Request, body: ServiceRequestCreate, db: DbSessio
 @limiter.limit("20/minute")
 async def jobs_assign(request: Request, body: JobAssignRequest, db: DbSession, user: AdminUser):
     r = await db.execute(select(Job).where(Job.id == body.job_id))
+    job = r.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job.assigned_type = body.assign_type
+    if body.assign_type == "mechanic":
+        job.assigned_mechanic_id = body.assign_id
+        job.assigned_garage_id = None
+    else:
+        job.assigned_garage_id = body.assign_id
+        job.assigned_mechanic_id = None
+    job.status = "assigned"
+    await db.flush()
+    return job_service.job_response_dict(job, None)
+
+
+@router.post("/{job_id}/assign")
+@limiter.limit("20/minute")
+async def jobs_assign_by_path(
+    request: Request,
+    job_id: UUID,
+    body: PathJobAssignRequest,
+    db: DbSession,
+    user: AdminUser,
+):
+    """Assign a job using path-parameter job_id (frontend-compatible)."""
+    r = await db.execute(select(Job).where(Job.id == job_id))
     job = r.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")

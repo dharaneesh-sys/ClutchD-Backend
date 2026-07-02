@@ -50,3 +50,9 @@ class JobAssignRequest(BaseModel):
     assign_type: str = Field(default="mechanic", pattern="^(mechanic|garage)$")
     assign_id: UUID
 
+
+class PathJobAssignRequest(BaseModel):
+    """Same as JobAssignRequest but without job_id (taken from path)."""
+    assign_type: str = Field(default="mechanic", pattern="^(mechanic|garage)$")
+    assign_id: UUID
+

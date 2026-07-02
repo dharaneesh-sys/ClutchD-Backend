@@ -66,6 +66,43 @@ async def list_categories(db: DbSession, search: str | None = Query(None, max_le
 
 # ── Products ─────────────────────────────────────────────────────────────
 
+@router.get("/products/top-products", response_model=ProductListResponse)
+async def top_products(
+    db: DbSession,
+    limit: int = Query(8, ge=1, le=50),
+):
+    """Return top-rated products for the homepage / marketplace landing."""
+    query = (
+        select(MarketplaceProduct)
+        .order_by(MarketplaceProduct.rating.desc(), MarketplaceProduct.name.asc())
+        .limit(limit)
+    )
+    result = await db.execute(query)
+    products = result.scalars().all()
+
+    return ProductListResponse(
+        products=[
+            ProductResponse(
+                id=p.id,
+                name=p.name,
+                description=p.description,
+                brand=p.brand,
+                vendor_id=p.vendor_id,
+                vendor=p.vendor,
+                price=p.price,
+                rating=p.rating,
+                image=p.image,
+                category_id=p.category_id,
+                category=p.category,
+                availability=p.availability,
+                delivery_time=p.delivery_time,
+                created_at=p.created_at,
+            )
+            for p in products
+        ]
+    )
+
+
 @router.get("/products", response_model=ProductListResponse)
 async def list_products(
     db: DbSession,

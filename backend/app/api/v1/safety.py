@@ -145,6 +145,12 @@ async def terms_conditions():
     }
 
 
+@router.get("/terms")
+async def terms_short():
+    """Alias for /terms-conditions so frontend's /safety/terms call works."""
+    return await terms_conditions()
+
+
 @router.get("/data-protection")
 async def data_protection():
     return {
