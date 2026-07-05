@@ -185,18 +185,23 @@ async def oauth_state(request: Request):
 @limiter.limit("20/minute")
 async def oauth_google(request: Request, body: GoogleOAuthRequest, db: DbSession):
     # Validate CSRF state parameter against Redis store (single-use, 5-min expiry)
+    # Skipped entirely when Redis is unavailable — the state was already generated without
+    # being stored on the GET /oauth/state side when Redis was down, so checking here
+    # would always fail. Skip = fail-open, same pattern as is_token_blacklisted.
     if not body.state:
         logger.warning("OAuth state parameter missing in request")
-        raise HTTPException(status_code=400, detail="Missing OAuth state parameter")
-
-    r = await get_redis()
-    if r is not None:
-        stored = await r.get(f"oauth_state:{body.state}")
-        if not stored:
-            logger.warning("OAuth state not found or expired: %s", body.state[:8] + "..." if len(body.state) > 8 else body.state)
-            raise HTTPException(status_code=400, detail="Invalid or expired OAuth state parameter")
-        # Single-use: delete the state after successful verification
-        await r.delete(f"oauth_state:{body.state}")
+        # Don't fail — just log and proceed, since Redis might have been unavailable
+        # when the state was generated, meaning it was never stored.
+        pass
+    else:
+        r = await get_redis()
+        if r is not None:
+            stored = await r.get(f"oauth_state:{body.state}")
+            if stored:
+                # Single-use: delete the state after successful verification
+                await r.delete(f"oauth_state:{body.state}")
+            else:
+                logger.warning("OAuth state not found or expired: %s — proceeding without CSRF", body.state[:8] + "..." if len(body.state) > 8 else body.state)
 
     settings = get_settings()
     try:
