@@ -46,7 +46,7 @@ The API works without the worker — tasks simply queue in Redis until the worke
 
 | Email | Password | Role |
 | --- | --- | --- |
-| `admin@clutchd.com` | `AdminChangeMe!` | admin |
+| `admin@21907.com` | `clutchD123` | admin |
 | `customer@demo.com` | `demo123456` | customer |
 | `mechanic@demo.com` | `demo123456` | mechanic (verified, near Coimbatore) |
 | `garage@demo.com` | `demo123456` | garage (verified) |
