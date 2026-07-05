@@ -120,15 +120,18 @@ def decode_token(token: str, expected_type: str = "access") -> dict[str, Any] | 
 
 
 async def is_token_blacklisted(token_jti: str) -> bool:
-    """Check if a token has been revoked. Fails closed if Redis is unavailable."""
+    """Check if a token has been revoked. Fails open if Redis is unavailable."""
     try:
         from app.core.redis_client import get_redis
         r = await get_redis()
+        if r is None:
+            logger.warning("Redis unavailable for token blacklist check — allowing token")
+            return False
         return bool(await r.sismember("token_blacklist", token_jti))
     except Exception:
-        # If Redis is down, fail closed (reject the token to be safe)
-        logger.warning("Redis unavailable for token blacklist check — rejecting token")
-        return True
+        # If Redis is down, fail open (allow the token) so auth keeps working
+        logger.warning("Redis unavailable for token blacklist check — allowing token")
+        return False
 
 
 async def blacklist_token(token_jti: str, ttl_seconds: int = 86400 * 8) -> None:
