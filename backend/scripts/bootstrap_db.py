@@ -8,6 +8,10 @@ import os
 import sys
 from urllib.parse import urlparse, urlunparse
 
+from alembic.config import Config as AlembicConfig
+from alembic.script import ScriptDirectory
+from alembic.runtime.migration import MigrationContext
+
 logger = logging.getLogger(__name__)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -142,6 +146,18 @@ async def create_schema() -> None:
         except Exception:
             logger.warning("PostGIS extension not available — spatial queries will use Python fallback")
         await conn.run_sync(Base.metadata.create_all)
+
+        # Stamp Alembic head so future migrations know the baseline
+        try:
+            sync_url = os.environ.get("SYNC_DATABASE_URL") or ""
+            if sync_url:
+                from alembic.command import stamp
+                alembic_cfg = AlembicConfig("alembic.ini")
+                alembic_cfg.set_main_option("sqlalchemy.url", sync_url)
+                stamp(alembic_cfg, "head")
+                logger.info("Stamped Alembic migration head")
+        except Exception as exc:
+            logger.warning(f"Could not stamp Alembic head (non-fatal): {exc}")
 
 
 async def get_or_create_user(session, email, password, role, is_superuser=False):
