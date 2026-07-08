@@ -4,12 +4,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.api.audit import audit_log
 from app.api.deps import DbSession, require_admin
+from app.models.audit_log import AuditLog
 from app.models.dispute import Dispute
 from app.models.enums import DisputeStatus, UserRole
 from app.models.garage import Garage
@@ -103,6 +104,30 @@ async def toggle_user_status(
     u.is_active = body.is_active
     await db.flush()
     return {"ok": True, "isActive": u.is_active}
+
+
+# ── Delete user ───────────────────────────────────────────────
+@router.delete("/users/{user_id}")
+@audit_log("delete_user", "user", entity_id_arg="user_id")
+async def delete_user(
+    user_id: UUID,
+    db: DbSession,
+    user: AdminUser,
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    u = result.scalar_one_or_none()
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    if u.role == UserRole.admin.value:
+        raise HTTPException(status_code=403, detail="Cannot delete another admin")
+
+    # Nullify foreign-key references before deletion
+    await db.execute(update(Payment).where(Payment.user_id == user_id).values(user_id=None))
+    await db.execute(update(AuditLog).where(AuditLog.user_id == user_id).values(user_id=None))
+
+    await db.delete(u)
+    await db.flush()
+    return {"ok": True, "message": f"User {user_id} deleted."}
 
 
 # ── Verification ──────────────────────────────────────────────
