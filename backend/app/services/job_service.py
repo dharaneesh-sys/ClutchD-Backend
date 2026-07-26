@@ -52,6 +52,7 @@ def job_response_dict(job: Job, mechanic_summary: dict | None = None) -> dict[st
         "requestType": job.request_type,
         "status": job.status,
         "createdAt": job.created_at.isoformat() if job.created_at else None,
+        "scheduledAt": job.scheduled_at.isoformat() if job.scheduled_at else None,
         "priceEstimate": job.price_estimate,
         "vehicleId": str(job.vehicle_id) if job.vehicle_id else None,
         "mechanic": mechanic_summary,
@@ -217,6 +218,7 @@ async def create_service_request(db: AsyncSession, user: User, data: dict[str, A
         price_estimate=data.get("priceEstimate"),
         media_url=data.get("mediaUrl"),
         vehicle_id=data.get("vehicleId"),
+        scheduled_at=data.get("scheduledAt"),
     )
     db.add(job)
     await db.flush()

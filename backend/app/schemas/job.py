@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -12,6 +13,7 @@ class ServiceRequestCreate(BaseModel):
     customerLng: float | None = Field(None, ge=-180, le=180)
     mediaUrl: str | None = Field(None, max_length=1024)
     vehicleId: UUID | None = None
+    scheduledAt: datetime | None = None
 
 
 class ServiceRequestStatusUpdate(BaseModel):
