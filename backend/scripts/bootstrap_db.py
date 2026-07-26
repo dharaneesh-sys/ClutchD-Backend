@@ -185,7 +185,8 @@ async def seed() -> None:
 
     async with SessionLocal() as session:
         # 1. Admin (Multiple variations to handle frontend validation and typos)
-        await get_or_create_user(session, "admin21907.com", "clutchD123", "admin", True)
+        await get_or_create_user(session, "admin@21907.com", "clutchD123", "admin", True)
+        # Note: admin@21907.com and admin@1907.com below provide valid fallbacks
         await get_or_create_user(session, "admin@21907.com", "clutchD123", "admin", True)
         await get_or_create_user(session, "admin@1907.com", "clutchD123", "admin", True)
 

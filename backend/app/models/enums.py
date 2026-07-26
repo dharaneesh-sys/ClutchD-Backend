@@ -43,4 +43,6 @@ class PaymentStatus(str, enum.Enum):
 
 class DisputeStatus(str, enum.Enum):
     open = "open"
+    investigating = "investigating"
     resolved = "resolved"
+    dismissed = "dismissed"

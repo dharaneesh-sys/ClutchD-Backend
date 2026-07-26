@@ -222,15 +222,14 @@ async def create_service_request(db: AsyncSession, user: User, data: dict[str, A
     )
     db.add(job)
     await db.flush()
-    await assign_job_auto(db, job)
-
-    if job.status == "searching":
-        try:
-            from app.tasks.worker import retry_job_assignment
-
-            retry_job_assignment.apply_async(args=[str(job.id)], countdown=45)
-        except Exception:
-            pass
+    from app.services.offer_service import create_provider_offers
+    count = await create_provider_offers(db, job)
+    if count == 0:
+        from app.tasks.worker import retry_job_assignment
+        retry_job_assignment.apply_async(args=[str(job.id)], countdown=45)
+    else:
+        # Notify the customer via WebSocket that providers have been notified
+        await push_status_update(str(job.user_id), str(job.id), "providers_notified", None)
 
     mech_summary = None
     if job.status == "assigned" and job.assigned_mechanic_id:
@@ -240,7 +239,14 @@ async def create_service_request(db: AsyncSession, user: User, data: dict[str, A
         r = await db.execute(select(Garage).where(Garage.id == job.assigned_garage_id))
         mech_summary = assignee_summary(job, r.scalar_one_or_none())
 
-    return job_response_dict(job, mech_summary)
+    result = job_response_dict(job, mech_summary)
+    # When offers were created the DB status stays "searching", but the frontend
+    # should show "Providers Notified" immediately. Override the display status
+    # in the HTTP response so both WS and HTTP channels agree, avoiding a race
+    # where WS arrives before HTTP and gets overwritten.
+    if count > 0 and job.status == "searching":
+        result["status"] = "providers_notified"
+    return result
 
 
 async def get_job_for_user(db: AsyncSession, job_id: UUID, user: User) -> Job | None:

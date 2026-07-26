@@ -1,6 +1,10 @@
+import logging
+
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, status
+
+logger = logging.getLogger(__name__)
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.limiter import limiter
@@ -38,8 +42,8 @@ async def patch_request_status(
     except InvalidTransitionError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
-        import traceback
-        raise HTTPException(status_code=500, detail=traceback.format_exc())
+        logger.exception("patch_job_status failed: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/request/{job_id}/finalize-price")
@@ -94,10 +98,7 @@ class SOSRequest(BaseModel):
 @router.post("/sos")
 @limiter.limit("5/minute")
 async def trigger_sos(request: Request, body: SOSRequest, db: DbSession, user: CurrentUser):
-    # Log emergency
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.critical(f"SOS TRIGGERED by user {user.id} at {body.lat}, {body.lon}")
+    logger.critical("SOS TRIGGERED by user %s at %s, %s", user.id, body.lat, body.lon)
     
     # Broadcast SOS event to admins and nearby users
     try:

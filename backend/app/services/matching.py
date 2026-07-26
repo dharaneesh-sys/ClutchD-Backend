@@ -7,12 +7,15 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
+
 logger = logging.getLogger(__name__)
 
 # When PostGIS is not available (Render managed PostgreSQL, etc.),
 # fall back to fetching all records and computing distances in Python.
 # Set the max we'll pull for in-memory sorting to avoid OOM.
 _MAX_FALLBACK_ROWS = 200
+_settings = get_settings()
 
 
 @dataclass
@@ -72,18 +75,24 @@ async def _fallback_mechanics(
 ) -> list[RankedMechanic]:
     if issue_tag:
         q = text("""
-            SELECT id, full_name, lat, lon, rating, expertise
-            FROM mechanics
-            WHERE verified = true AND available = true
-              AND expertise && ARRAY[CAST(:tag AS VARCHAR)]
+            SELECT m.id, m.full_name, m.lat, m.lon, m.rating, m.expertise
+            FROM mechanics m
+            JOIN users u ON u.id = m.user_id
+            WHERE m.verified = true AND m.available = true
+              AND m.penalized = false
+              AND u.is_active = true
+              AND m.expertise && ARRAY[CAST(:tag AS VARCHAR)]
             LIMIT :maxrows
         """)
         params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS, "tag": issue_tag}
     else:
         q = text("""
-            SELECT id, full_name, lat, lon, rating, expertise
-            FROM mechanics
-            WHERE verified = true AND available = true
+            SELECT m.id, m.full_name, m.lat, m.lon, m.rating, m.expertise
+            FROM mechanics m
+            JOIN users u ON u.id = m.user_id
+            WHERE m.verified = true AND m.available = true
+              AND m.penalized = false
+              AND u.is_active = true
             LIMIT :maxrows
         """)
         params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS}
@@ -93,6 +102,8 @@ async def _fallback_mechanics(
     ranked: list[RankedMechanic] = []
     for row in rows:
         dist_m = haversine_m(lat, lon, float(row["lat"]), float(row["lon"]))
+        if dist_m > _settings.search_radius_m:
+            continue
         rating = float(row["rating"] or 0)
         ranked.append(
             RankedMechanic(
@@ -119,18 +130,24 @@ async def _fallback_garages(
 ) -> list[RankedGarage]:
     if issue_tag:
         q = text("""
-            SELECT id, garage_name, lat, lon, rating, services
-            FROM garages
-            WHERE verified = true
-              AND services && ARRAY[CAST(:tag AS VARCHAR)]
+            SELECT g.id, g.garage_name, g.lat, g.lon, g.rating, g.services
+            FROM garages g
+            JOIN users u ON u.id = g.user_id
+            WHERE g.verified = true
+              AND g.penalized = false
+              AND u.is_active = true
+              AND g.services && ARRAY[CAST(:tag AS VARCHAR)]
             LIMIT :maxrows
         """)
         params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS, "tag": issue_tag}
     else:
         q = text("""
-            SELECT id, garage_name, lat, lon, rating, services
-            FROM garages
-            WHERE verified = true
+            SELECT g.id, g.garage_name, g.lat, g.lon, g.rating, g.services
+            FROM garages g
+            JOIN users u ON u.id = g.user_id
+            WHERE g.verified = true
+              AND g.penalized = false
+              AND u.is_active = true
             LIMIT :maxrows
         """)
         params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS}
@@ -140,6 +157,8 @@ async def _fallback_garages(
     ranked: list[RankedGarage] = []
     for row in rows:
         dist_m = haversine_m(lat, lon, float(row["lat"]), float(row["lon"]))
+        if dist_m > _settings.search_radius_m:
+            continue
         rating = float(row["rating"] or 0)
         ranked.append(
             RankedGarage(
@@ -165,32 +184,48 @@ async def nearest_mechanics(
     issue_tag: str | None = None,
 ) -> list[RankedMechanic]:
     sql_issue = """
-        SELECT id, full_name, lat, lon, rating, expertise,
+        SELECT m.id, m.full_name, m.lat, m.lon, m.rating, m.expertise,
           ST_Distance(
-            geography(ST_SetSRID(ST_MakePoint(lon, lat), 4326)),
+            geography(ST_SetSRID(ST_MakePoint(m.lon, m.lat), 4326)),
             geography(ST_SetSRID(ST_MakePoint(:ulon, :ulat), 4326))
           ) AS dist_m
-        FROM mechanics
-        WHERE verified = true AND available = true
-          AND expertise && ARRAY[CAST(:tag AS VARCHAR)]
+        FROM mechanics m
+        JOIN users u ON u.id = m.user_id
+        WHERE m.verified = true AND m.available = true
+          AND m.penalized = false
+          AND u.is_active = true
+          AND m.expertise && ARRAY[CAST(:tag AS VARCHAR)]
+          AND ST_DWithin(
+                geography(ST_SetSRID(ST_MakePoint(m.lon, m.lat), 4326)),
+                geography(ST_SetSRID(ST_MakePoint(:ulon, :ulat), 4326)),
+                :radius_m
+              )
         ORDER BY dist_m ASC
         LIMIT :limit
     """
     sql_all = """
-        SELECT id, full_name, lat, lon, rating, expertise,
+        SELECT m.id, m.full_name, m.lat, m.lon, m.rating, m.expertise,
           ST_Distance(
-            geography(ST_SetSRID(ST_MakePoint(lon, lat), 4326)),
+            geography(ST_SetSRID(ST_MakePoint(m.lon, m.lat), 4326)),
             geography(ST_SetSRID(ST_MakePoint(:ulon, :ulat), 4326))
           ) AS dist_m
-        FROM mechanics
-        WHERE verified = true AND available = true
+        FROM mechanics m
+        JOIN users u ON u.id = m.user_id
+        WHERE m.verified = true AND m.available = true
+          AND m.penalized = false
+          AND u.is_active = true
+          AND ST_DWithin(
+                geography(ST_SetSRID(ST_MakePoint(m.lon, m.lat), 4326)),
+                geography(ST_SetSRID(ST_MakePoint(:ulon, :ulat), 4326)),
+                :radius_m
+              )
         ORDER BY dist_m ASC
         LIMIT :limit
     """
     if issue_tag:
-        params: dict[str, Any] = {"ulat": lat, "ulon": lon, "limit": limit, "tag": issue_tag}
+        params: dict[str, Any] = {"ulat": lat, "ulon": lon, "limit": limit, "tag": issue_tag, "radius_m": _settings.search_radius_m}
     else:
-        params = {"ulat": lat, "ulon": lon, "limit": limit}
+        params = {"ulat": lat, "ulon": lon, "limit": limit, "radius_m": _settings.search_radius_m}
 
     sql = sql_issue if issue_tag else sql_all
     rows = await _postgis_fetch(db, sql, params)
@@ -225,32 +260,48 @@ async def nearest_garages(
     issue_tag: str | None = None,
 ) -> list[RankedGarage]:
     sql_issue = """
-        SELECT id, garage_name, lat, lon, rating, services,
+        SELECT g.id, g.garage_name, g.lat, g.lon, g.rating, g.services,
           ST_Distance(
-            geography(ST_SetSRID(ST_MakePoint(lon, lat), 4326)),
+            geography(ST_SetSRID(ST_MakePoint(g.lon, g.lat), 4326)),
             geography(ST_SetSRID(ST_MakePoint(:ulon, :ulat), 4326))
           ) AS dist_m
-        FROM garages
-        WHERE verified = true
-          AND services && ARRAY[CAST(:tag AS VARCHAR)]
+        FROM garages g
+        JOIN users u ON u.id = g.user_id
+        WHERE g.verified = true
+          AND g.penalized = false
+          AND u.is_active = true
+          AND g.services && ARRAY[CAST(:tag AS VARCHAR)]
+          AND ST_DWithin(
+                geography(ST_SetSRID(ST_MakePoint(g.lon, g.lat), 4326)),
+                geography(ST_SetSRID(ST_MakePoint(:ulon, :ulat), 4326)),
+                :radius_m
+              )
         ORDER BY dist_m ASC
         LIMIT :limit
     """
     sql_all = """
-        SELECT id, garage_name, lat, lon, rating, services,
+        SELECT g.id, g.garage_name, g.lat, g.lon, g.rating, g.services,
           ST_Distance(
-            geography(ST_SetSRID(ST_MakePoint(lon, lat), 4326)),
+            geography(ST_SetSRID(ST_MakePoint(g.lon, g.lat), 4326)),
             geography(ST_SetSRID(ST_MakePoint(:ulon, :ulat), 4326))
           ) AS dist_m
-        FROM garages
-        WHERE verified = true
+        FROM garages g
+        JOIN users u ON u.id = g.user_id
+        WHERE g.verified = true
+          AND g.penalized = false
+          AND u.is_active = true
+          AND ST_DWithin(
+                geography(ST_SetSRID(ST_MakePoint(g.lon, g.lat), 4326)),
+                geography(ST_SetSRID(ST_MakePoint(:ulon, :ulat), 4326)),
+                :radius_m
+              )
         ORDER BY dist_m ASC
         LIMIT :limit
     """
     if issue_tag:
-        params: dict[str, Any] = {"ulat": lat, "ulon": lon, "limit": limit, "tag": issue_tag}
+        params: dict[str, Any] = {"ulat": lat, "ulon": lon, "limit": limit, "tag": issue_tag, "radius_m": _settings.search_radius_m}
     else:
-        params = {"ulat": lat, "ulon": lon, "limit": limit}
+        params = {"ulat": lat, "ulon": lon, "limit": limit, "radius_m": _settings.search_radius_m}
 
     sql = sql_issue if issue_tag else sql_all
     rows = await _postgis_fetch(db, sql, params)

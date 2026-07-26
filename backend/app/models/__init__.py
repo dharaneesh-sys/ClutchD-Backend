@@ -1,4 +1,5 @@
 from app.models.audit_log import AuditLog
+from app.models.device_token import DeviceToken
 from app.models.dispute import Dispute
 from app.models.garage import Garage, GarageMechanic
 from app.models.job import Job
@@ -28,11 +29,13 @@ from app.models.notification import Notification
 from app.models.payment import Payment
 from app.models.review import Review
 from app.models.user import User
+from app.models.provider_offer import ProviderOffer
 from app.models.vehicle import Vehicle
 
 __all__ = [
     "User",
     "CustomerProfile",
+    "DeviceToken",
     "Mechanic",
     "Garage",
     "GarageMechanic",
@@ -51,6 +54,7 @@ __all__ = [
     "UserFavorite",
     "ClutchDCard",
     "ClutchDOffer",
+    "ProviderOffer",
     "MarketplaceCategory",
     "MarketplaceProduct",
     "MarketplaceVendor",

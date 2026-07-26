@@ -20,6 +20,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from app.api.v1.router import api_router
 from app.api.v1.token import router as token_router
 from app.core.config import get_settings
+from app.core.firebase import init_firebase
 from app.core.limiter import limiter as app_limiter
 from app.core.security import decode_token, is_token_blacklisted
 from app.db.session import AsyncSessionLocal
@@ -41,6 +42,7 @@ _last_db_persist: dict[str, float] = {}  # user_id -> timestamp of last DB write
 async def lifespan(_: FastAPI):
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     Path(settings.upload_dir).resolve()
+    init_firebase()  # Initialize FCM (graceful skip if unconfigured)
     yield
 
 

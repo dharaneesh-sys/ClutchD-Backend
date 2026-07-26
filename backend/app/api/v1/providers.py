@@ -11,6 +11,7 @@ from app.models.garage import Garage
 from app.models.job import Job
 from app.models.mechanic import Mechanic
 from app.models.payment import Payment
+from app.models.provider_offer import ProviderOffer
 from app.services import matching
 from app.services.user_payload import user_to_frontend_dict
 
@@ -188,3 +189,68 @@ async def get_earnings(
         earnings.append({"name": label, "earnings": total // 100, "date": str(day)})
 
     return {"earnings": earnings, "total": grand_total // 100}
+
+
+# ── Provider Offers ────────────────────────────────────
+@router.get("/offers")
+@limiter.limit("30/minute")
+async def get_provider_offers(
+    request: Request,
+    db: DbSession,
+    user: CurrentUser,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    status: str | None = Query(None, pattern="^(pending|expired)$"),
+):
+    if user.role not in (UserRole.mechanic.value, UserRole.garage.value):
+        raise HTTPException(status_code=403, detail="Providers only")
+
+    if user.role == UserRole.mechanic.value:
+        mr = await db.execute(select(Mechanic).where(Mechanic.user_id == user.id))
+        provider = mr.scalar_one_or_none()
+    else:
+        gr = await db.execute(select(Garage).where(Garage.user_id == user.id))
+        provider = gr.scalar_one_or_none()
+
+    if not provider:
+        return {"offers": []}
+
+    query = (
+        select(ProviderOffer, Job)
+        .join(Job, Job.id == ProviderOffer.job_id)
+        .where(
+            ProviderOffer.provider_type == user.role,
+            ProviderOffer.provider_id == provider.id,
+        )
+    )
+
+    if status == "pending":
+        query = query.where(ProviderOffer.status == "pending")
+    elif status == "expired":
+        query = query.where(ProviderOffer.expires_at <= func.now())
+    else:
+        query = query.where(ProviderOffer.expires_at > func.now())
+
+    query = query.order_by(ProviderOffer.created_at.desc()).offset(offset).limit(limit)
+
+    r = await db.execute(query)
+    rows = r.all()
+
+    offers_list = []
+    for po, j in rows:
+        offers_list.append({
+            "id": str(po.id),
+            "jobId": str(po.job_id),
+            "providerType": po.provider_type,
+            "providerId": str(po.provider_id),
+            "status": po.status,
+            "expiresAt": po.expires_at.isoformat() if po.expires_at else None,
+            "createdAt": po.created_at.isoformat() if po.created_at else None,
+            "job": {
+                "issueTag": j.issue_tag,
+                "description": j.description,
+                "customerLocation": {"lat": j.customer_lat, "lng": j.customer_lon} if j.customer_lat else None,
+                "status": j.status,
+            },
+        })
+    return {"offers": offers_list, "total": len(offers_list)}

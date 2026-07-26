@@ -71,6 +71,10 @@ async def seed():
         mech_vijay_user = existing_users.get("mechanic@demo.com")
         garage_speedfix_user = existing_users.get("garage@demo.com")
 
+        if not all([cust_existing, mech_vijay_user, garage_speedfix_user]):
+            logger.warning("Existing seed users not found — bootstrap_db.py may not have run. Skipping admin seed data.")
+            return
+
         # Fetch existing profiles
         def fetch_profile(model, user_id):
             return session.execute(select(model).where(model.user_id == user_id))

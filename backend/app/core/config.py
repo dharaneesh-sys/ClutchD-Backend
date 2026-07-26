@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     # When true, use mock Razorpay client even in production (for testing).
     use_mock_payments: bool = False
 
+    search_radius_km: float = 25.0
+
+    # Firebase Cloud Messaging (optional — set FIREBASE_SERVICE_ACCOUNT to enable push notifications)
+    fcm_service_account: str | None = None
+
     celery_broker_url: str | None = None
     celery_result_backend: str | None = None
 
@@ -77,6 +82,14 @@ class Settings(BaseSettings):
     @property
     def celery_backend(self) -> str:
         return self.celery_result_backend or self.redis_url
+
+    @property
+    def search_radius_m(self) -> float:
+        return self.search_radius_km * 1000.0
+
+    @property
+    def fcm_enabled(self) -> bool:
+        return bool(self.fcm_service_account)
 
 
 @lru_cache

@@ -63,3 +63,4 @@ class Job(Base):
     reviews: Mapped[list["Review"]] = relationship("Review", back_populates="job")
     payments: Mapped[list["Payment"]] = relationship("Payment", back_populates="job")
     dispute: Mapped["Dispute | None"] = relationship("Dispute", back_populates="job", uselist=False)
+    offers: Mapped[list["ProviderOffer"]] = relationship("ProviderOffer", back_populates="job")
