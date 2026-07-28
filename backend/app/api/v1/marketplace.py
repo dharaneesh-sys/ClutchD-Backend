@@ -219,10 +219,10 @@ async def get_product(product_id: uuid.UUID, db: DbSession):
 @router.get("/marketplace/products/{product_id}/fitment", response_model=FitmentCheckResult)
 async def check_product_fitment(
     product_id: uuid.UUID,
+    db: DbSession,
     make: str | None = Query(None, max_length=100),
     model: str | None = Query(None, max_length=100),
     year: int | None = Query(None, ge=1900, le=2100),
-    db: DbSession,
 ):
     """Check if a product fits a given vehicle make/model/year.
 
