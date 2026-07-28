@@ -218,8 +218,8 @@ async def analytics(db: DbSession, user: AdminUser):
             (SELECT COUNT(*) FROM jobs WHERE status = 'completed') AS jobs_completed,
             (SELECT COUNT(*) FROM jobs) AS total_jobs,
             (SELECT COALESCE(SUM(amount), 0) FROM payments) AS total_revenue,
-            (SELECT COUNT(*) FROM mechanic) AS total_mechanics,
-            (SELECT COUNT(*) FROM garage) AS total_garages
+            (SELECT COUNT(*) FROM mechanics) AS total_mechanics,
+            (SELECT COUNT(*) FROM garages) AS total_garages
     """))).one()
     return {
         "totalUsers": row.total_users,

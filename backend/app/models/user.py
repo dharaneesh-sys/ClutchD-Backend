@@ -28,4 +28,5 @@ class User(Base):
     vehicles: Mapped[list["Vehicle"]] = relationship("Vehicle")
     notifications: Mapped[list["Notification"]] = relationship("Notification")
     favorites: Mapped[list["UserFavorite"]] = relationship("UserFavorite", back_populates="user", cascade="all, delete-orphan")
+    device_tokens: Mapped[list["DeviceToken"]] = relationship("DeviceToken", back_populates="user")
     clutchd_card: Mapped["ClutchDCard | None"] = relationship("ClutchDCard", back_populates="user", uselist=False, cascade="all, delete-orphan")

@@ -82,6 +82,25 @@ class MarketplaceProductReview(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class MarketplaceProductFitment(Base):
+    """Maps products to compatible vehicle makes/models with optional year ranges."""
+
+    __tablename__ = "marketplace_product_fitments"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("marketplace_products.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    vehicle_make: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    vehicle_model: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    year_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    year_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fitment_type: Mapped[str] = mapped_column(String(32), nullable=False, default="direct_fit")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="demo")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class MarketplaceOffer(Base):
     __tablename__ = "marketplace_offers"
 

@@ -185,8 +185,7 @@ async def seed() -> None:
 
     async with SessionLocal() as session:
         # 1. Admin (Multiple variations to handle frontend validation and typos)
-        await get_or_create_user(session, "admin@21907.com", "clutchD123", "admin", True)
-        # Note: admin@21907.com and admin@1907.com below provide valid fallbacks
+        await get_or_create_user(session, "admin21907.com", "clutchD123", "admin", True)
         await get_or_create_user(session, "admin@21907.com", "clutchD123", "admin", True)
         await get_or_create_user(session, "admin@1907.com", "clutchD123", "admin", True)
 
@@ -338,6 +337,167 @@ async def seed_marketplace(session):
             delivery_time=pd["delivery_time"],
         )
         session.add(product)
+
+    await session.flush()
+
+    # ── Product Fitments (demo compatibility data) ─────────────────────
+    from app.models.marketplace import MarketplaceProductFitment
+
+    product_result = await session.execute(select(MarketplaceProduct))
+    all_products = product_result.scalars().all()
+
+    def find_product(name_contains, brand=None):
+        for p in all_products:
+            if brand and p.brand and p.brand.lower() != brand.lower():
+                continue
+            if name_contains.lower() in p.name.lower():
+                return p
+        return None
+
+    # Universal-fit products (fit all vehicles)
+    universal_products = [
+        "Car Floor Mat Set",
+        "Seat Cover Set",
+        "Windshield Sun Shade",
+    ]
+    for up_name in universal_products:
+        p = find_product(up_name)
+        if p:
+            existing = await session.execute(
+                select(MarketplaceProductFitment).where(
+                    MarketplaceProductFitment.product_id == p.id,
+                    MarketplaceProductFitment.vehicle_make.is_(None),
+                )
+            )
+            if not existing.scalar_one_or_none():
+                session.add(MarketplaceProductFitment(
+                    product_id=p.id,
+                    vehicle_make=None,
+                    vehicle_model=None,
+                    fitment_type="universal",
+                    notes="Universal fit — compatible with most vehicles.",
+                    source="demo",
+                ))
+
+    # Make-specific fitments: brake pads, oil filters, etc. grouped by popular makes
+    fitment_map = {
+        "Brake Pad Set (Ceramic)": {
+            "hyundai": ["i10", "i20", "creta", "venue"],
+            "maruti-suzuki": ["swift", "dzire", "baleno", "brezza"],
+            "tata": ["nexon", "tiago", "altroz", "punch"],
+            "toyota": ["fortuner", "innova"],
+            "honda": ["city", "amaze", "jazz"],
+            "mahindra": ["scorpio", "xuv700", "thar", "bolero"],
+            "kia": ["seltos", "sonet"],
+            "volkswagen": ["polo", "virtus", "taigun"],
+            "renault": ["kwid", "kiger"],
+            "ford": ["ecosport", "figo", "aspire"],
+            "mg": ["hector", "astor", "zs-ev"],
+            "nissan": ["magnite"],
+        },
+        "Brake Disc Rotor (Vented)": {
+            "hyundai": ["creta", "verna", "tucson", "alcazar"],
+            "maruti-suzuki": ["brezza", "grand-vitara", "ertiga", "xl6"],
+            "tata": ["harrier", "safari", "nexon"],
+            "toyota": ["fortuner", "hycross", "innova"],
+            "honda": ["city", "civic", "crv"],
+            "mahindra": ["xuv700", "scorpio", "alturas"],
+            "kia": ["seltos", "carnival", "carens"],
+            "volkswagen": ["tiguan", "taigun"],
+            "ford": ["endeavour", "ecosport"],
+            "mg": ["hector", "gloster"],
+        },
+        "Oil Filter F-101": {
+            "hyundai": ["i10", "i20", "creta", "venue", "verna"],
+            "maruti-suzuki": ["swift", "dzire", "baleno", "ertiga", "brezza"],
+            "tata": ["tiago", "altroz", "nexon", "harrier", "punch"],
+            "toyota": ["fortuner", "innova", "glanza"],
+            "honda": ["city", "amaze", "jazz", "elevate"],
+            "mahindra": ["scorpio", "xuv700", "thar", "bolero"],
+            "kia": ["seltos", "sonet"],
+            "volkswagen": ["polo", "virtus", "taigun"],
+            "renault": ["kwid", "triber", "kiger"],
+            "ford": ["ecosport", "figo", "freestyle"],
+            "mg": ["hector", "astor"],
+            "nissan": ["magnite"],
+        },
+        "Air Filter Element (Panel Type)": {
+            "hyundai": ["i10", "i20", "creta", "venue"],
+            "maruti-suzuki": ["swift", "dzire", "baleno", "brezza"],
+            "tata": ["nexon", "altroz", "tiago"],
+            "honda": ["city", "amaze", "jazz"],
+            "kia": ["seltos", "sonet"],
+            "mahindra": ["xuv700", "scorpio"],
+        },
+        "Cabin Filter (Activated Carbon)": {
+            "hyundai": ["i20", "creta", "venue", "verna"],
+            "maruti-suzuki": ["baleno", "brezza", "grand-vitara", "dzire"],
+            "tata": ["nexon", "harrier", "altroz", "punch"],
+            "toyota": ["fortuner", "innova", "hycross"],
+            "honda": ["city", "elevate", "crv"],
+            "kia": ["seltos", "sonet", "carens"],
+            "mahindra": ["xuv700", "scorpio", "thar"],
+            "volkswagen": ["taigun", "virtus"],
+        },
+        "Spark Plug Iridium (Set of 4)": {
+            "hyundai": ["i10", "i20", "creta", "venue", "verna"],
+            "maruti-suzuki": ["swift", "dzire", "baleno", "ertiga", "ciaz"],
+            "tata": ["tiago", "altroz", "nexon", "harrier"],
+            "toyota": ["fortuner", "innova", "glanza", "camry"],
+            "honda": ["city", "amaze", "civic"],
+            "mahindra": ["scorpio", "xuv700"],
+            "kia": ["seltos", "sonet"],
+            "volkswagen": ["polo", "virtus"],
+            "ford": ["ecosport", "figo", "aspire"],
+            "mg": ["hector", "astor"],
+        },
+        "Battery 12V 40Ah (Maintenance Free)": {
+            "hyundai": ["i10", "i20", "creta", "venue", "aura", "exter"],
+            "maruti-suzuki": ["alto", "swift", "dzire", "wagonr", "s-presso", "ignis"],
+            "tata": ["tiago", "altroz", "nexon", "punch", "tigor"],
+            "toyota": ["glanza", "rumion", "taisor"],
+            "honda": ["amaze", "jazz", "city"],
+            "mahindra": ["xuv300", "bolero", "scorpio"],
+            "kia": ["sonet"],
+            "renault": ["kwid", "triber", "kiger"],
+            "ford": ["figo", "aspire", "freestyle"],
+            "mg": ["comet", "zs-ev"],
+            "nissan": ["magnite", "micra"],
+        },
+        "Shock Absorber Set (Front Pair)": {
+            "hyundai": ["i20", "creta", "venue", "verna"],
+            "maruti-suzuki": ["swift", "dzire", "baleno", "ertiga"],
+            "tata": ["nexon", "harrier", "altroz", "safari"],
+            "toyota": ["fortuner", "innova"],
+            "honda": ["city", "amaze", "civic"],
+            "mahindra": ["xuv700", "scorpio", "thar"],
+            "kia": ["seltos", "carnival"],
+        },
+    }
+
+    for prod_name, makes_models in fitment_map.items():
+        p = find_product(prod_name)
+        if not p:
+            continue
+        for make, models in makes_models.items():
+            for model in models:
+                existing = await session.execute(
+                    select(MarketplaceProductFitment).where(
+                        MarketplaceProductFitment.product_id == p.id,
+                        MarketplaceProductFitment.vehicle_make == make,
+                        MarketplaceProductFitment.vehicle_model == model,
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    continue
+                session.add(MarketplaceProductFitment(
+                    product_id=p.id,
+                    vehicle_make=make,
+                    vehicle_model=model,
+                    year_start=2015,
+                    fitment_type="direct_fit",
+                    source="demo",
+                ))
 
     # ── Offers ─────────────────────────────────────────────────────────
     offers_data = [

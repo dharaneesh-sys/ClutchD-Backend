@@ -9,17 +9,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import DbSession, get_current_user_optional
 from app.models.marketplace import (
+    MarketplaceCartItem,
     MarketplaceCategory,
     MarketplaceOffer,
     MarketplaceOrder,
     MarketplaceOrderItem,
     MarketplaceProduct,
+    MarketplaceProductFitment,
     MarketplaceProductReview,
 )
 from app.models.user import User
 from app.schemas.marketplace import (
+    CartItemCreate,
+    CartItemResponse,
+    CartItemUpdate,
     CategoryListResponse,
     CategoryResponse,
+    FitmentCheckResult,
+    FitmentRecordResponse,
     OrderCreate,
     OrderItemData,
     OrderListResponse,
@@ -205,6 +212,95 @@ async def get_product(product_id: uuid.UUID, db: DbSession):
         delivery_time=product.delivery_time,
         created_at=product.created_at,
     )
+
+
+# ── Fitment ──────────────────────────────────────────────────────────────
+
+@router.get("/marketplace/products/{product_id}/fitment", response_model=FitmentCheckResult)
+async def check_product_fitment(
+    product_id: uuid.UUID,
+    make: str | None = Query(None, max_length=100),
+    model: str | None = Query(None, max_length=100),
+    year: int | None = Query(None, ge=1900, le=2100),
+    db: DbSession,
+):
+    """Check if a product fits a given vehicle make/model/year.
+
+    Queries the marketplace_product_fitments table for matching records.
+    Accepts vehicle details directly as query params — no auth required.
+    """
+    if not make:
+        return FitmentCheckResult(
+            compatible=False,
+            fitment_type="unknown",
+            non_fitting_parts=["Select a vehicle to check compatibility."],
+            source="api",
+        )
+
+    stmt = select(MarketplaceProductFitment).where(
+        MarketplaceProductFitment.product_id == product_id,
+        MarketplaceProductFitment.vehicle_make == make.lower(),
+    )
+
+    if model:
+        stmt = stmt.where(
+            MarketplaceProductFitment.vehicle_model.is_(None)
+            | (MarketplaceProductFitment.vehicle_model == model.lower()),
+        )
+
+    results = await db.execute(stmt)
+    fitments = results.scalars().all()
+
+    if not fitments:
+        return FitmentCheckResult(
+            compatible=False,
+            fitment_type="unknown",
+            non_fitting_parts=[f"No fitment data available for {make} {model or ''}."],
+            source="api",
+        )
+
+    # Best match: specific model > model-agnostic
+    specific = [f for f in fitments if f.vehicle_model and f.vehicle_model == (model or "").lower()]
+    generic = [f for f in fitments if not f.vehicle_model]
+    best = specific[0] if specific else (generic[0] if generic else fitments[0])
+
+    if year is not None:
+        if best.year_start is not None and year < best.year_start:
+            return FitmentCheckResult(
+                compatible=False,
+                fitment_type="incompatible",
+                non_fitting_parts=[f"Compatible from {best.year_start} model year onwards."],
+                source="api",
+            )
+        if best.year_end is not None and year > best.year_end:
+            return FitmentCheckResult(
+                compatible=False,
+                fitment_type="incompatible",
+                non_fitting_parts=[f"Compatible up to {best.year_end} model year."],
+                source="api",
+            )
+
+    non_fitting = []
+    if best.fitment_type == "requires_modification":
+        non_fitting = [best.notes or "May require modifications for proper fitment."]
+
+    return FitmentCheckResult(
+        compatible=best.fitment_type != "incompatible",
+        fitment_type=best.fitment_type,
+        non_fitting_parts=non_fitting,
+        source=best.source,
+    )
+
+
+@router.get("/marketplace/products/{product_id}/fitments", response_model=list[FitmentRecordResponse])
+async def list_product_fitments(product_id: uuid.UUID, db: DbSession):
+    """List all fitment records for a product (admin/catalog use)."""
+    result = await db.execute(
+        select(MarketplaceProductFitment)
+        .where(MarketplaceProductFitment.product_id == product_id)
+        .order_by(MarketplaceProductFitment.vehicle_make, MarketplaceProductFitment.vehicle_model)
+    )
+    return result.scalars().all()
 
 
 # ── Product Reviews ──────────────────────────────────────────────────────
@@ -415,3 +511,164 @@ async def list_orders(
         )
 
     return OrderListResponse(orders=order_responses)
+
+
+# ── Cart ─────────────────────────────────────────────────────────────────
+
+@router.get("/marketplace/cart", response_model=list[CartItemResponse])
+async def list_cart_items(
+    db: DbSession,
+    user: User | None = Depends(get_current_user_optional),
+):
+    """Get all cart items for the current user (or anonymous user)."""
+    user_id = user.id if user else None
+    query = select(MarketplaceCartItem).order_by(MarketplaceCartItem.created_at.desc())
+    if user_id:
+        query = query.where(MarketplaceCartItem.user_id == user_id)
+    else:
+        return []  # anonymous carts only via frontend local state
+
+    result = await db.execute(query)
+    items = result.scalars().all()
+    return [
+        CartItemResponse(
+            id=item.id,
+            user_id=item.user_id,
+            product_id=item.product_id,
+            vendor_id=item.vendor_id,
+            quantity=item.quantity,
+            created_at=item.created_at,
+        )
+        for item in items
+    ]
+
+
+@router.post("/marketplace/cart", response_model=CartItemResponse, status_code=status.HTTP_201_CREATED)
+async def add_cart_item(
+    body: CartItemCreate,
+    db: DbSession,
+    user: User | None = Depends(get_current_user_optional),
+):
+    """Add a product to the cart, or increment quantity if already present."""
+    user_id = user.id if user else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    # Check for existing item
+    existing = await db.execute(
+        select(MarketplaceCartItem).where(
+            MarketplaceCartItem.user_id == user_id,
+            MarketplaceCartItem.product_id == body.product_id,
+        )
+    )
+    existing_item = existing.scalar_one_or_none()
+
+    if existing_item:
+        existing_item.quantity += body.quantity
+        await db.flush()
+        await db.refresh(existing_item)
+        item = existing_item
+    else:
+        item = MarketplaceCartItem(
+            user_id=user_id,
+            product_id=body.product_id,
+            vendor_id=body.vendor_id,
+            quantity=body.quantity,
+        )
+        db.add(item)
+        await db.flush()
+        await db.refresh(item)
+
+    return CartItemResponse(
+        id=item.id,
+        user_id=item.user_id,
+        product_id=item.product_id,
+        vendor_id=item.vendor_id,
+        quantity=item.quantity,
+        created_at=item.created_at,
+    )
+
+
+@router.patch("/marketplace/cart/{item_id}", response_model=CartItemResponse)
+async def update_cart_item(
+    item_id: uuid.UUID,
+    body: CartItemUpdate,
+    db: DbSession,
+    user: User | None = Depends(get_current_user_optional),
+):
+    """Update item quantity (set to 0 to remove)."""
+    user_id = user.id if user else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    result = await db.execute(
+        select(MarketplaceCartItem).where(
+            MarketplaceCartItem.id == item_id,
+            MarketplaceCartItem.user_id == user_id,
+        )
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Cart item not found")
+
+    if body.quantity == 0:
+        await db.delete(item)
+        await db.flush()
+        raise HTTPException(status_code=204, detail="Item removed")
+
+    item.quantity = body.quantity
+    await db.flush()
+    await db.refresh(item)
+
+    return CartItemResponse(
+        id=item.id,
+        user_id=item.user_id,
+        product_id=item.product_id,
+        vendor_id=item.vendor_id,
+        quantity=item.quantity,
+        created_at=item.created_at,
+    )
+
+
+@router.delete("/marketplace/cart/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_cart_item(
+    item_id: uuid.UUID,
+    db: DbSession,
+    user: User | None = Depends(get_current_user_optional),
+):
+    """Remove a single item from the cart."""
+    user_id = user.id if user else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    result = await db.execute(
+        select(MarketplaceCartItem).where(
+            MarketplaceCartItem.id == item_id,
+            MarketplaceCartItem.user_id == user_id,
+        )
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Cart item not found")
+
+    await db.delete(item)
+    await db.flush()
+
+
+@router.delete("/marketplace/cart", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_cart(
+    db: DbSession,
+    user: User | None = Depends(get_current_user_optional),
+):
+    """Remove all items from the user's cart."""
+    user_id = user.id if user else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    result = await db.execute(
+        select(MarketplaceCartItem).where(MarketplaceCartItem.user_id == user_id)
+    )
+    items = result.scalars().all()
+    for item in items:
+        await db.delete(item)
+    await db.flush()

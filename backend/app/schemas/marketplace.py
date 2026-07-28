@@ -89,6 +89,29 @@ class ProductReviewCreate(BaseModel):
         return v
 
 
+# ── Fitment ──────────────────────────────────────────────────────────────
+
+class FitmentCheckResult(BaseModel):
+    compatible: bool
+    fitment_type: str = "unknown"
+    non_fitting_parts: list[str] = []
+    source: str = "demo"
+
+
+class FitmentRecordResponse(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: UUID
+    product_id: UUID
+    vehicle_make: str | None = None
+    vehicle_model: str | None = None
+    year_start: int | None = None
+    year_end: int | None = None
+    fitment_type: str
+    notes: str | None = None
+    source: str = "demo"
+
+
 # ── Cart ─────────────────────────────────────────────────────────────────
 
 class CartItemCreate(BaseModel):
