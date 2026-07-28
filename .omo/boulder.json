@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "active_work_id": null,
+  "works": {
+    "phase-2b-provider-matching": {
+      "work_id": "phase-2b-provider-matching",
+      "active_plan": ".omo/plans/phase-2b-provider-matching.md",
+      "plan_name": "phase-2b-provider-matching",
+      "session_ids": ["opencode:ses_062314f59ffeWimFJ8pE8b2ZX2"],
+      "status": "completed",
+      "worktree_path": null
+    },
+    "phase-2c-push-notifications": {
+      "work_id": "phase-2c-push-notifications",
+      "active_plan": ".omo/plans/phase-2c-push-notifications.md",
+      "plan_name": "phase-2c-push-notifications",
+      "session_ids": ["opencode:ses_062314f59ffeWimFJ8pE8b2ZX2"],
+      "status": "completed",
+      "worktree_path": null
+    }
+  }
+}
