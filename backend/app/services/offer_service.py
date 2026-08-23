@@ -39,6 +39,21 @@ async def create_provider_offers(db: AsyncSession, job: Job) -> int:
     if not locked_job:
         return 0
 
+    # Scheduled jobs must not be dispatched before their slot. Skip offer
+    # creation while scheduled_at is in the future; retry_job_assignment
+    # (or a due-time scheduler) will call this again once it is due.
+    scheduled_at = locked_job.scheduled_at
+    if scheduled_at is not None:
+        now = datetime.now(timezone.utc)
+        if scheduled_at.tzinfo is None:
+            # Naive datetimes (e.g. SQLite round-trip) are stored as UTC.
+            scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
+        if scheduled_at > now:
+            logger.info(
+                "Job %s is scheduled for %s — deferring offer dispatch",
+                locked_job.id, scheduled_at.isoformat(),
+            )
+            return 0
     settings = get_settings()
 
     # 2. Query eligible providers — map issue tag to expertise (mirrors
@@ -182,7 +197,7 @@ async def accept_offer(db: AsyncSession, user: User, offer_id: UUID) -> dict:
 
     offer.status = "accepted"
     locked_job.status = "assigned"
-    locked_job.assigned_provider_type = provider_type
+    locked_job.assigned_type = provider_type
     if provider_type == "mechanic":
         locked_job.assigned_mechanic_id = provider_id
     elif provider_type == "garage":

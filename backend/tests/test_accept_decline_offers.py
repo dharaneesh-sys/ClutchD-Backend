@@ -148,7 +148,7 @@ async def test_mechanic_accepts_own_offer(
     await db_session.refresh(test_job)
     assert test_job.status == "assigned"
     assert test_job.assigned_mechanic_id == test_mechanic.id
-    assert test_job.assigned_provider_type == "mechanic"
+    assert test_job.assigned_type == "mechanic"
 
 
 async def test_garage_accepts_own_offer(
@@ -173,7 +173,7 @@ async def test_garage_accepts_own_offer(
     await db_session.refresh(test_job)
     assert test_job.status == "assigned"
     assert test_job.assigned_garage_id == test_garage.id
-    assert test_job.assigned_provider_type == "garage"
+    assert test_job.assigned_type == "garage"
 
 
 # ── Authorization failures ────────────────────────────────────────────
