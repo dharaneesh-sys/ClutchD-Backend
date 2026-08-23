@@ -494,5 +494,6 @@ def garage_to_map_dict(g: RankedGarage) -> dict:
         "name": g.garage_name,
         "location": [g.lat, g.lon],
         "rating": round(g.rating, 1),
+        "services": _coerce_str_list(g.services),
         "distanceKm": round(g.distance_m / 1000.0, 2),
     }
