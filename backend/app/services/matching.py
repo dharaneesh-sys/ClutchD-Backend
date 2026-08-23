@@ -56,14 +56,22 @@ def _score(distance_m: float, rating: float, availability_bonus: float = 0.0) ->
     return (rating or 3.0) * 2.0 - dist_km * 0.8 + availability_bonus
 
 
-async def _postgis_fetch(db: AsyncSession, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-    """Execute a PostGIS query; return rows or None on failure."""
+async def _postgis_fetch(db: AsyncSession, sql: str, params: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Execute a PostGIS query.
+
+    Returns rows (possibly empty) on success, or ``None`` when the query
+    fails so callers can distinguish "PostGIS is down" (fall back) from
+    "no providers matched" (an empty result — do not fall back).
+    """
     try:
         result = await db.execute(text(sql), params)
         return result.mappings().all()
     except Exception as exc:
-        logger.warning("PostGIS query failed, falling back to Python haversine: %s", exc)
-        return []
+        logger.warning(
+            "PostGIS query failed, falling back to Python haversine: %s", exc,
+            exc_info=True,
+        )
+        return None
 
 
 async def _fallback_mechanics(
@@ -229,7 +237,7 @@ async def nearest_mechanics(
 
     sql = sql_issue if issue_tag else sql_all
     rows = await _postgis_fetch(db, sql, params)
-    if rows:
+    if rows is not None:
         ranked: list[RankedMechanic] = []
         for row in rows:
             dist_m = float(row["dist_m"])
@@ -305,7 +313,7 @@ async def nearest_garages(
 
     sql = sql_issue if issue_tag else sql_all
     rows = await _postgis_fetch(db, sql, params)
-    if rows:
+    if rows is not None:
         ranked: list[RankedGarage] = []
         for row in rows:
             dist_m = float(row["dist_m"])
