@@ -223,6 +223,31 @@ async def test_expired_offer_returns_410(
     resp = await client.post(f"/api/offers/{offer.id}/accept", headers=headers)
     assert resp.status_code == 410
 
+async def test_accept_survives_naive_expiry_round_trip(
+    client, db_session, test_mechanic, test_job,
+):
+    """Regression (pre-F2 B-1): accept works after a naive expiry round-trip.
+
+    SQLite stores ``DateTime(timezone=True)`` without an offset, so a live
+    round-trip hands ``accept_offer`` a *naive* ``expires_at``. The rest of
+    this suite hides that because ``expire_on_commit=False`` keeps the
+    original aware object in the identity map — here we force a refresh so
+    the value is re-read from SQLite naive, mirroring a real SQLite run.
+    Unfixed code compares naive vs aware and raises ``TypeError``.
+    """
+    offer = _make_offer(test_job.id, "mechanic", test_mechanic.id)
+    db_session.add(offer)
+    await db_session.commit()
+    await db_session.refresh(offer)
+    # Precondition: SQLite really handed back a naive datetime.
+    assert offer.expires_at.tzinfo is None
+
+    headers = _auth_header(str(test_mechanic.user.id))
+    resp = await client.post(f"/api/offers/{offer.id}/accept", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "accepted"
+    assert body["job_status"] == "assigned"
 
 # ── Concurrency ────────────────────────────────────────────────────────
 

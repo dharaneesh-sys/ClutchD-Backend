@@ -177,11 +177,16 @@ async def accept_offer(db: AsyncSession, user: User, offer_id: UUID) -> dict:
             detail=f"Offer is already {offer.status}",
         )
 
-    if offer.expires_at and offer.expires_at < datetime.now(timezone.utc):
-        raise HTTPException(
-            status.HTTP_410_GONE,
-            detail="Offer has expired",
-        )
+    expires_at = offer.expires_at
+    if expires_at is not None:
+        if expires_at.tzinfo is None:
+            # Naive datetimes (e.g. SQLite round-trip) are stored as UTC.
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at < datetime.now(timezone.utc):
+            raise HTTPException(
+                status.HTTP_410_GONE,
+                detail="Offer has expired",
+            )
 
     r = await db.execute(
         select(Job)
