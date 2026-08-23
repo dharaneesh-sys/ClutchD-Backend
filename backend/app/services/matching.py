@@ -15,6 +15,85 @@ logger = logging.getLogger(__name__)
 # fall back to fetching all records and computing distances in Python.
 # Set the max we'll pull for in-memory sorting to avoid OOM.
 _MAX_FALLBACK_ROWS = 200
+
+# Mirrors ClutchD-App/src/lib/constants.js ISSUE_TO_EXPERTISE exactly.
+# Maps frontend ISSUE_TAGS values to backend expertise/services values.
+# Only 2/12 overlap directly (electrical, transmission); this fixes dispatch.
+# ``other`` and unknown tags resolve to None (unfiltered dispatch).
+ISSUE_TO_EXPERTISE: dict[str, str | None] = {
+    "flat_tire": "tires",
+    "engine_failure": "engine",
+    "battery_dead": "battery",
+    "overheating": "engine",
+    "brake_issue": "brakes",
+    "oil_leak": "oil",
+    "electrical": "electrical",
+    "ac_not_working": "ac",
+    "transmission": "transmission",
+    "starting_issue": "engine",
+    "noise": "diagnostics",
+    "other": None,
+}
+
+# Set of valid expertise targets (non-None values of the map) — used to make
+# the mapping idempotent when callers pre-map (e.g., offer_service).
+_EXPERTISE_VALUES: set[str] = {v for v in ISSUE_TO_EXPERTISE.values() if v is not None}
+
+
+def issue_tag_to_expertise(tag: str | None) -> str | None:
+    """Resolve a frontend issue tag to its expertise value.
+
+    Mirrors ``issueTagToExpertise`` in ClutchD-App/src/lib/constants.js:
+    unknown / empty / ``other`` → ``None`` (unfiltered dispatch).
+    """
+    if not isinstance(tag, str) or not tag:
+        return None
+    if tag in ISSUE_TO_EXPERTISE:
+        return ISSUE_TO_EXPERTISE[tag]
+    return None
+
+
+def _resolve_expertise(tag: str | None) -> str | None:
+    """Internal helper: idempotent resolution for filtering.
+
+    Handles both raw issue tags (``flat_tire`` → ``tires``) and already-mapped
+    expertise values (``tires`` → ``tires``) so that callers like
+    ``offer_service`` which pre-map do not double-map to ``None``.
+    Unknown tags → ``None`` (unfiltered).
+    """
+    if not isinstance(tag, str) or not tag:
+        return None
+    if tag in ISSUE_TO_EXPERTISE:
+        return ISSUE_TO_EXPERTISE[tag]
+    if tag in _EXPERTISE_VALUES:
+        return tag
+    return None
+
+def _coerce_uuid(value: Any) -> UUID:
+    """Normalize a raw SQL row id to ``UUID``.
+
+    asyncpg (production) returns native UUIDs; SQLite ``text()`` rows return
+    undashed hex strings. Keeps the ``Ranked*`` dataclass contracts
+    dialect-independent. No-op on PostgreSQL.
+    """
+    return value if isinstance(value, UUID) else UUID(str(value))
+
+
+def _coerce_str_list(value: Any) -> list[str]:
+    """Normalize an ARRAY/JSON column value to ``list[str]`` across dialects.
+
+    SQLite renders ARRAY(String) as JSON text and ``text()`` rows bypass
+    result processors, so values can arrive as raw strings.
+    """
+    if isinstance(value, str):
+        import json as _json
+
+        try:
+            parsed = _json.loads(value)
+        except Exception:
+            return []
+        value = parsed
+    return [str(v) for v in (value or [])]
 _settings = get_settings()
 
 
@@ -81,7 +160,8 @@ async def _fallback_mechanics(
     limit: int,
     issue_tag: str | None,
 ) -> list[RankedMechanic]:
-    if issue_tag:
+    expertise = _resolve_expertise(issue_tag)
+    if expertise:
         q = text("""
             SELECT m.id, m.full_name, m.lat, m.lon, m.rating, m.expertise
             FROM mechanics m
@@ -90,9 +170,37 @@ async def _fallback_mechanics(
               AND m.penalized = false
               AND u.is_active = true
               AND m.expertise && ARRAY[CAST(:tag AS VARCHAR)]
+            ORDER BY u.created_at ASC, u.id ASC
             LIMIT :maxrows
         """)
-        params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS, "tag": issue_tag}
+        params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS, "tag": expertise}
+        try:
+            result = await db.execute(q, params)
+            rows = result.mappings().all()
+        except Exception:
+            q_all = text("""
+                SELECT m.id, m.full_name, m.lat, m.lon, m.rating, m.expertise
+                FROM mechanics m
+                JOIN users u ON u.id = m.user_id
+                WHERE m.verified = true AND m.available = true
+                  AND m.penalized = false
+                  AND u.is_active = true
+                ORDER BY u.created_at ASC, u.id ASC
+                LIMIT :maxrows
+            """)
+            result = await db.execute(q_all, {"maxrows": _MAX_FALLBACK_ROWS})
+            all_rows = result.mappings().all()
+            rows = []
+            for r in all_rows:
+                exp = r["expertise"]
+                if isinstance(exp, str):
+                    import json as _json
+                    try:
+                        exp = _json.loads(exp)
+                    except Exception:
+                        exp = []
+                if expertise in (exp or []):
+                    rows.append(r)
     else:
         q = text("""
             SELECT m.id, m.full_name, m.lat, m.lon, m.rating, m.expertise
@@ -101,11 +209,12 @@ async def _fallback_mechanics(
             WHERE m.verified = true AND m.available = true
               AND m.penalized = false
               AND u.is_active = true
+            ORDER BY u.created_at ASC, u.id ASC
             LIMIT :maxrows
         """)
         params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS}
-    result = await db.execute(q, params)
-    rows = result.mappings().all()
+        result = await db.execute(q, params)
+        rows = result.mappings().all()
 
     ranked: list[RankedMechanic] = []
     for row in rows:
@@ -115,14 +224,14 @@ async def _fallback_mechanics(
         rating = float(row["rating"] or 0)
         ranked.append(
             RankedMechanic(
-                id=row["id"],
+                id=_coerce_uuid(row["id"]),
                 full_name=row["full_name"],
                 lat=float(row["lat"]),
                 lon=float(row["lon"]),
                 rating=rating,
                 distance_m=dist_m,
                 score=_score(dist_m, rating, 0.5),
-                expertise=list(row["expertise"] or []),
+                expertise=_coerce_str_list(row["expertise"]),
             )
         )
     ranked.sort(key=lambda x: -x.score)
@@ -136,7 +245,8 @@ async def _fallback_garages(
     limit: int,
     issue_tag: str | None,
 ) -> list[RankedGarage]:
-    if issue_tag:
+    expertise = _resolve_expertise(issue_tag)
+    if expertise:
         q = text("""
             SELECT g.id, g.garage_name, g.lat, g.lon, g.rating, g.services
             FROM garages g
@@ -145,9 +255,37 @@ async def _fallback_garages(
               AND g.penalized = false
               AND u.is_active = true
               AND g.services && ARRAY[CAST(:tag AS VARCHAR)]
+            ORDER BY u.created_at ASC, u.id ASC
             LIMIT :maxrows
         """)
-        params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS, "tag": issue_tag}
+        params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS, "tag": expertise}
+        try:
+            result = await db.execute(q, params)
+            rows = result.mappings().all()
+        except Exception:
+            q_all = text("""
+                SELECT g.id, g.garage_name, g.lat, g.lon, g.rating, g.services
+                FROM garages g
+                JOIN users u ON u.id = g.user_id
+                WHERE g.verified = true
+                  AND g.penalized = false
+                  AND u.is_active = true
+                ORDER BY u.created_at ASC, u.id ASC
+                LIMIT :maxrows
+            """)
+            result = await db.execute(q_all, {"maxrows": _MAX_FALLBACK_ROWS})
+            all_rows = result.mappings().all()
+            rows = []
+            for r in all_rows:
+                svc = r["services"]
+                if isinstance(svc, str):
+                    import json as _json
+                    try:
+                        svc = _json.loads(svc)
+                    except Exception:
+                        svc = []
+                if expertise in (svc or []):
+                    rows.append(r)
     else:
         q = text("""
             SELECT g.id, g.garage_name, g.lat, g.lon, g.rating, g.services
@@ -156,11 +294,12 @@ async def _fallback_garages(
             WHERE g.verified = true
               AND g.penalized = false
               AND u.is_active = true
+            ORDER BY u.created_at ASC, u.id ASC
             LIMIT :maxrows
         """)
         params: dict[str, Any] = {"maxrows": _MAX_FALLBACK_ROWS}
-    result = await db.execute(q, params)
-    rows = result.mappings().all()
+        result = await db.execute(q, params)
+        rows = result.mappings().all()
 
     ranked: list[RankedGarage] = []
     for row in rows:
@@ -170,14 +309,14 @@ async def _fallback_garages(
         rating = float(row["rating"] or 0)
         ranked.append(
             RankedGarage(
-                id=row["id"],
+                id=_coerce_uuid(row["id"]),
                 garage_name=row["garage_name"],
                 lat=float(row["lat"]),
                 lon=float(row["lon"]),
                 rating=rating,
                 distance_m=dist_m,
                 score=_score(dist_m, rating, 0.3),
-                services=list(row["services"] or []),
+                services=_coerce_str_list(row["services"]),
             )
         )
     ranked.sort(key=lambda x: -x.score)
@@ -230,12 +369,13 @@ async def nearest_mechanics(
         ORDER BY dist_m ASC
         LIMIT :limit
     """
-    if issue_tag:
-        params: dict[str, Any] = {"ulat": lat, "ulon": lon, "limit": limit, "tag": issue_tag, "radius_m": _settings.search_radius_m}
+    expertise = _resolve_expertise(issue_tag)
+    if expertise:
+        params: dict[str, Any] = {"ulat": lat, "ulon": lon, "limit": limit, "tag": expertise, "radius_m": _settings.search_radius_m}
     else:
         params = {"ulat": lat, "ulon": lon, "limit": limit, "radius_m": _settings.search_radius_m}
 
-    sql = sql_issue if issue_tag else sql_all
+    sql = sql_issue if expertise else sql_all
     rows = await _postgis_fetch(db, sql, params)
     if rows is not None:
         ranked: list[RankedMechanic] = []
@@ -244,14 +384,14 @@ async def nearest_mechanics(
             rating = float(row["rating"] or 0)
             ranked.append(
                 RankedMechanic(
-                    id=row["id"],
+                    id=_coerce_uuid(row["id"]),
                     full_name=row["full_name"],
                     lat=float(row["lat"]),
                     lon=float(row["lon"]),
                     rating=rating,
                     distance_m=dist_m,
                     score=_score(dist_m, rating, 0.5),
-                    expertise=list(row["expertise"] or []),
+                    expertise=_coerce_str_list(row["expertise"]),
                 )
             )
         ranked.sort(key=lambda x: -x.score)
@@ -306,12 +446,13 @@ async def nearest_garages(
         ORDER BY dist_m ASC
         LIMIT :limit
     """
-    if issue_tag:
-        params: dict[str, Any] = {"ulat": lat, "ulon": lon, "limit": limit, "tag": issue_tag, "radius_m": _settings.search_radius_m}
+    expertise = _resolve_expertise(issue_tag)
+    if expertise:
+        params: dict[str, Any] = {"ulat": lat, "ulon": lon, "limit": limit, "tag": expertise, "radius_m": _settings.search_radius_m}
     else:
         params = {"ulat": lat, "ulon": lon, "limit": limit, "radius_m": _settings.search_radius_m}
 
-    sql = sql_issue if issue_tag else sql_all
+    sql = sql_issue if expertise else sql_all
     rows = await _postgis_fetch(db, sql, params)
     if rows is not None:
         ranked: list[RankedGarage] = []
@@ -320,14 +461,14 @@ async def nearest_garages(
             rating = float(row["rating"] or 0)
             ranked.append(
                 RankedGarage(
-                    id=row["id"],
+                    id=_coerce_uuid(row["id"]),
                     garage_name=row["garage_name"],
                     lat=float(row["lat"]),
                     lon=float(row["lon"]),
                     rating=rating,
                     distance_m=dist_m,
                     score=_score(dist_m, rating, 0.3),
-                    services=list(row["services"] or []),
+                    services=_coerce_str_list(row["services"]),
                 )
             )
         ranked.sort(key=lambda x: -x.score)

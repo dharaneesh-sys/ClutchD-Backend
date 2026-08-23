@@ -41,9 +41,14 @@ async def create_provider_offers(db: AsyncSession, job: Job) -> int:
 
     settings = get_settings()
 
-    # 2. Query eligible providers
+    # 2. Query eligible providers — map issue tag to expertise (mirrors
+    #    matching.ISSUE_TO_EXPERTISE / frontend constants.js). Unknown/other →
+    #    None (unfiltered dispatch) so we never filter to empty on the raw tag.
     lat, lon = locked_job.customer_lat, locked_job.customer_lon
-    issue_tag = locked_job.issue_tag
+    raw_tag = locked_job.issue_tag
+    # Use matching's helper to keep the mapping single-sourced
+    expertise = matching.issue_tag_to_expertise(raw_tag)  # ISSUE_TO_EXPERTISE mapping
+    issue_tag = expertise  # None means unfiltered; string means filtered by expertise
 
     mechs = await matching.nearest_mechanics(
         db, lat, lon, limit=10, issue_tag=issue_tag
