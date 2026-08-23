@@ -64,6 +64,16 @@ def job_response_dict(job: Job, mechanic_summary: dict | None = None) -> dict[st
     }
 
 
+# DEPRECATED (task 16, clutchd-app-hardening, 2026-08-23): ORPHANED - no callers.
+# Superseded by the provider-offer marketplace flow: jobs now dispatch via
+# offer_service.create_provider_offers (direct call + Celery retry_job_assignment in
+# app/tasks/worker.py, which calls create_provider_offers - NOT this function).
+# grep across backend/app and backend/tests finds zero call sites; only this definition remains.
+# Kept per plan option B (annotation over deletion): body retained as reference for the
+# legacy direct-assign semantics (FOR UPDATE lock -> nearest match -> assign). Migration
+# note: if direct auto-assignment is ever re-enabled, port the FOR UPDATE lock pattern
+# into offer_service rather than resurrecting this; it bypasses offer expiry, push
+# notifications, and provider choice entirely.
 async def assign_job_auto(db: AsyncSession, job: Job) -> Job:
     """Auto-assign a job using an atomic lock to prevent double-assignment."""
     # Re-fetch with FOR UPDATE so concurrent callers block rather than race
