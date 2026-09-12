@@ -51,6 +51,7 @@ class MarketplaceProduct(Base):
     brand: Mapped[str | None] = mapped_column(String(100), nullable=True)
     vendor_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("marketplace_vendors.id"), nullable=True)
     vendor: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    seller_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     rating: Mapped[Decimal] = mapped_column(Numeric(3, 2), default=Decimal("0"))
     image: Mapped[str | None] = mapped_column(String(500), nullable=True)

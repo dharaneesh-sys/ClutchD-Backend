@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import DbSession, get_current_user_optional
+from app.api.deps import DbSession, get_current_user_optional, require_roles
 from app.models.marketplace import (
     MarketplaceCartItem,
     MarketplaceCategory,
@@ -17,8 +17,10 @@ from app.models.marketplace import (
     MarketplaceProduct,
     MarketplaceProductFitment,
     MarketplaceProductReview,
+    MarketplaceVendor,
 )
 from app.models.user import User
+from app.models.enums import UserRole
 from app.schemas.marketplace import (
     CartItemCreate,
     CartItemResponse,
@@ -33,6 +35,8 @@ from app.schemas.marketplace import (
     OrderResponse,
     ProductListResponse,
     ProductResponse,
+    ProductCreate,
+    ProductUpdate,
     OfferValidateRequest,
     OfferValidateResponse,
     ProductReviewCreate,
@@ -187,6 +191,226 @@ async def list_products(
             for p in products
         ]
     )
+
+
+# ── Seller products ────────────────────────────────────────────────────
+
+
+def to_product_response(p: MarketplaceProduct) -> ProductResponse:
+    """Map a MarketplaceProduct row to the public ProductResponse schema."""
+    return ProductResponse(
+        id=p.id,
+        name=p.name,
+        description=p.description,
+        brand=p.brand,
+        vendor_id=p.vendor_id,
+        vendor=p.vendor,
+        price=p.price,
+        rating=p.rating,
+        image=p.image,
+        category_id=p.category_id,
+        category=p.category,
+        availability=p.availability,
+        delivery_time=p.delivery_time,
+        created_at=p.created_at,
+    )
+
+
+async def _seller_display_name(db: DbSession, user: User) -> str:
+    """Best-effort seller display name: garage/mechanic profile, else email prefix."""
+    from app.models.garage import Garage
+    from app.models.mechanic import Mechanic
+
+    result = await db.execute(select(Garage).where(Garage.user_id == user.id))
+    garage = result.scalar_one_or_none()
+    if garage and garage.garage_name:
+        return garage.garage_name
+    result = await db.execute(select(Mechanic).where(Mechanic.user_id == user.id))
+    mechanic = result.scalar_one_or_none()
+    if mechanic and mechanic.full_name:
+        return mechanic.full_name
+    return (user.email or "seller").split("@")[0]
+
+
+async def _get_or_create_vendor(
+    db: DbSession, user: User, vendor_id: uuid.UUID | None
+) -> MarketplaceVendor:
+    """Return the explicit vendor, or find-or-create one from seller identity."""
+    if vendor_id is not None:
+        result = await db.execute(select(MarketplaceVendor).where(MarketplaceVendor.id == vendor_id))
+        vendor = result.scalar_one_or_none()
+        if not vendor:
+            raise HTTPException(status_code=404, detail="Vendor not found")
+        return vendor
+    name = await _seller_display_name(db, user)
+    result = await db.execute(select(MarketplaceVendor).where(MarketplaceVendor.name == name))
+    vendor = result.scalar_one_or_none()
+    if vendor is None:
+        vendor = MarketplaceVendor(name=name)
+        db.add(vendor)
+        await db.flush()
+    return vendor
+
+
+async def _resolve_category(
+    db: DbSession, category: str | None, category_id: uuid.UUID | None
+) -> tuple[uuid.UUID | None, str | None]:
+    """Resolve category input to (category_id, category name)."""
+    if category_id is not None:
+        result = await db.execute(select(MarketplaceCategory).where(MarketplaceCategory.id == category_id))
+        found = result.scalar_one_or_none()
+        if not found:
+            raise HTTPException(status_code=422, detail="Unknown category_id")
+        return found.id, found.name
+    if category is not None:
+        raw = category.strip()
+        if not raw:
+            raise HTTPException(status_code=422, detail="Unknown category")
+        try:
+            parsed = uuid.UUID(raw)
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            result = await db.execute(select(MarketplaceCategory).where(MarketplaceCategory.id == parsed))
+            found = result.scalar_one_or_none()
+            if found:
+                return found.id, found.name
+        result = await db.execute(select(MarketplaceCategory).where(MarketplaceCategory.slug == raw))
+        found = result.scalar_one_or_none()
+        if found:
+            return found.id, found.name
+        result = await db.execute(select(MarketplaceCategory).where(MarketplaceCategory.name.ilike(raw)))
+        found = result.scalar_one_or_none()
+        if found:
+            return found.id, found.name
+        raise HTTPException(status_code=422, detail="Unknown category")
+    return None, None
+
+
+def _is_admin(user: User) -> bool:
+    try:
+        role = UserRole(user.role) if isinstance(user.role, str) else user.role
+    except ValueError:
+        return bool(user.is_superuser)
+    return role == UserRole.admin or bool(user.is_superuser)
+
+
+async def _ensure_owner_or_admin(db: DbSession, product: MarketplaceProduct, user: User) -> None:
+    if _is_admin(user):
+        return
+    if product.seller_user_id is not None and product.seller_user_id == user.id:
+        return
+    if product.seller_user_id is None:
+        display = await _seller_display_name(db, user)
+        if product.vendor and product.vendor == display:
+            return
+    raise HTTPException(status_code=403, detail="Not your product")
+
+
+_seller_roles = require_roles(UserRole.mechanic, UserRole.garage, UserRole.admin)
+
+
+@router.post("/products", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/marketplace/products", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
+async def create_product(body: ProductCreate, db: DbSession, user: User = Depends(_seller_roles)):
+    """Create a marketplace product as a mechanic/garage/admin seller.
+
+    Images are uploaded first via POST /api/uploads; pass the returned
+    ``url`` (``/static/uploads/...``) or an absolute http(s) URL as ``image``.
+    """
+    category_id, category_name = await _resolve_category(db, body.category, body.category_id)
+    vendor = await _get_or_create_vendor(db, user, body.vendor_id)
+    product = MarketplaceProduct(
+        name=body.name,
+        description=body.description,
+        brand=body.brand,
+        vendor_id=vendor.id,
+        vendor=vendor.name,
+        price=body.price,
+        image=body.image,
+        category_id=category_id,
+        category=category_name,
+        availability=body.availability,
+        delivery_time=body.delivery_time,
+        seller_user_id=user.id,
+    )
+    db.add(product)
+    await db.flush()
+    await db.refresh(product)
+    return to_product_response(product)
+
+
+@router.get("/products/my-listings", response_model=ProductListResponse)
+@router.get("/marketplace/products/my-listings", response_model=ProductListResponse)
+async def my_listings(db: DbSession, user: User = Depends(_seller_roles)):
+    """List the calling seller's own products (legacy vendor-string rows included)."""
+    display = await _seller_display_name(db, user)
+    query = (
+        select(MarketplaceProduct)
+        .where(
+            or_(
+                MarketplaceProduct.seller_user_id == user.id,
+                (MarketplaceProduct.seller_user_id.is_(None)) & (MarketplaceProduct.vendor == display),
+            )
+        )
+        .order_by(MarketplaceProduct.created_at.desc())
+    )
+    result = await db.execute(query)
+    products = result.scalars().all()
+    return ProductListResponse(products=[to_product_response(p) for p in products])
+
+
+@router.put("/products/{product_id}", response_model=ProductResponse)
+@router.put("/marketplace/products/{product_id}", response_model=ProductResponse)
+@router.patch("/products/{product_id}", response_model=ProductResponse)
+@router.patch("/marketplace/products/{product_id}", response_model=ProductResponse)
+async def update_product(product_id: uuid.UUID, body: ProductUpdate, db: DbSession, user: User = Depends(_seller_roles)):
+    """Update own product; admins may update any product."""
+    result = await db.execute(select(MarketplaceProduct).where(MarketplaceProduct.id == product_id))
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    await _ensure_owner_or_admin(db, product, user)
+    if body.name is not None:
+        product.name = body.name
+    if body.price is not None:
+        product.price = body.price
+    if body.description is not None:
+        product.description = body.description
+    if body.brand is not None:
+        product.brand = body.brand
+    if body.image is not None:
+        product.image = body.image
+    if body.availability is not None:
+        product.availability = body.availability
+    if body.delivery_time is not None:
+        product.delivery_time = body.delivery_time
+    if body.vendor_id is not None:
+        vendor = await _get_or_create_vendor(db, user, body.vendor_id)
+        product.vendor_id = vendor.id
+        product.vendor = vendor.name
+    if body.category is not None or body.category_id is not None:
+        category_id, category_name = await _resolve_category(db, body.category, body.category_id)
+        product.category_id = category_id
+        product.category = category_name
+    await db.flush()
+    await db.refresh(product)
+    return to_product_response(product)
+
+
+@router.delete("/products/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/marketplace/products/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_product(product_id: uuid.UUID, db: DbSession, user: User = Depends(_seller_roles)):
+    """Delete own product; admins may delete any product."""
+    result = await db.execute(select(MarketplaceProduct).where(MarketplaceProduct.id == product_id))
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    await _ensure_owner_or_admin(db, product, user)
+    await db.delete(product)
+    await db.flush()
+    return None
+
 
 
 @router.get("/products/{product_id}", response_model=ProductResponse)

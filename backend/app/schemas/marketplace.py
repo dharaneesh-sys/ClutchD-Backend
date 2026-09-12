@@ -46,6 +46,56 @@ class ProductListResponse(BaseModel):
     products: list[ProductResponse]
 
 
+class ProductCreate(BaseModel):
+    """Seller product-creation payload.
+
+    Category may be given as a UUID string, slug, or display name via
+    ``category``, or directly as ``category_id``. Image is a URL
+    returned by POST /api/uploads (``/static/uploads/...``) or an
+    absolute http(s) URL.
+    """
+
+    name: str = Field(min_length=3, max_length=255)
+    price: Decimal = Field(ge=0)
+    description: str | None = None
+    brand: str | None = Field(default=None, max_length=100)
+    category: str | None = Field(default=None, max_length=100)
+    category_id: UUID | None = None
+    vendor_id: UUID | None = None
+    image: str | None = Field(default=None, max_length=500)
+    availability: bool = True
+    delivery_time: str | None = Field(default=None, max_length=50)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_not_blank(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Name must not be blank")
+        return v.strip()
+
+
+class ProductUpdate(BaseModel):
+    """Partial update payload - all fields optional."""
+
+    name: str | None = Field(default=None, min_length=3, max_length=255)
+    price: Decimal | None = Field(default=None, ge=0)
+    description: str | None = None
+    brand: str | None = Field(default=None, max_length=100)
+    category: str | None = Field(default=None, max_length=100)
+    category_id: UUID | None = None
+    vendor_id: UUID | None = None
+    image: str | None = Field(default=None, max_length=500)
+    availability: bool | None = None
+    delivery_time: str | None = Field(default=None, max_length=50)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_not_blank(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError("Name must not be blank")
+        return v.strip() if isinstance(v, str) else v
+
+
 # ── Offer ────────────────────────────────────────────────────────────────
 
 class OfferValidateRequest(BaseModel):
