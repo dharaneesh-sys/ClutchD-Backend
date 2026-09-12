@@ -60,6 +60,8 @@ async def register_mechanic(db: AsyncSession, data: MechanicRegister) -> tuple[s
         lon=lon,
         verified=verified,
         available=True,
+        aadhaar_photo_url=data.aadhaarPhotoUrl,
+        license_photo_url=data.licensePhotoUrl,
     )
     db.add(mech)
     await db.flush()
@@ -97,6 +99,8 @@ async def register_garage(db: AsyncSession, data: GarageRegister) -> tuple[str, 
         lat=lat,
         lon=lon,
         verified=verified,
+        aadhaar_photo_url=data.aadhaarPhotoUrl,
+        license_photo_url=data.licensePhotoUrl,
     )
     db.add(g)
     await db.flush()
@@ -125,6 +129,8 @@ async def signup_from_payload(db: AsyncSession, body: SignupPayload) -> tuple[st
             location=body.location or "",
             latitude=body.latitude,
             longitude=body.longitude,
+            aadhaarPhotoUrl=body.aadhaarPhotoUrl,
+            licensePhotoUrl=body.licensePhotoUrl,
         )
         return await register_mechanic(db, mr)
     gr = GarageRegister(
@@ -140,6 +146,8 @@ async def signup_from_payload(db: AsyncSession, body: SignupPayload) -> tuple[st
         operatingHours=body.operatingHours or "",
         latitude=body.latitude,
         longitude=body.longitude,
+        aadhaarPhotoUrl=body.aadhaarPhotoUrl,
+        licensePhotoUrl=body.licensePhotoUrl,
     )
     return await register_garage(db, gr)
 

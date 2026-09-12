@@ -25,6 +25,8 @@ class MechanicRegister(BaseModel):
     location: str = Field(min_length=2, max_length=500)
     latitude: float | None = Field(None, ge=-90, le=90)
     longitude: float | None = Field(None, ge=-180, le=180)
+    aadhaarPhotoUrl: str | None = Field(None, max_length=1024)
+    licensePhotoUrl: str | None = Field(None, max_length=1024)
 
 
 class GarageRegister(BaseModel):
@@ -40,6 +42,8 @@ class GarageRegister(BaseModel):
     operatingHours: str = Field(min_length=1, max_length=50)
     latitude: float | None = Field(None, ge=-90, le=90)
     longitude: float | None = Field(None, ge=-180, le=180)
+    aadhaarPhotoUrl: str | None = Field(None, max_length=1024)
+    licensePhotoUrl: str | None = Field(None, max_length=1024)
 
 
 class SignupPayload(BaseModel):
@@ -60,6 +64,8 @@ class SignupPayload(BaseModel):
     operatingHours: str | None = Field(None, max_length=50)
     latitude: float | None = Field(None, ge=-90, le=90)
     longitude: float | None = Field(None, ge=-180, le=180)
+    aadhaarPhotoUrl: str | None = Field(None, max_length=1024)
+    licensePhotoUrl: str | None = Field(None, max_length=1024)
 
 
 class GoogleOAuthRequest(BaseModel):
@@ -107,6 +113,8 @@ class ProfileUpdateRequest(BaseModel):
     mechanicCount: int | None = Field(None, ge=0, le=999)
     latitude: float | None = Field(None, ge=-90, le=90)
     longitude: float | None = Field(None, ge=-180, le=180)
+    aadhaarPhotoUrl: str | None = Field(None, max_length=1024)
+    licensePhotoUrl: str | None = Field(None, max_length=1024)
 
 
 class ForgotPasswordRequest(BaseModel):

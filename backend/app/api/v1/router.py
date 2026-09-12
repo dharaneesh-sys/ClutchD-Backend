@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import admin, auth, card, device_tokens, faq, favorites, garage_routes, jobs, marketplace, matching_routes, notifications, offers, payments, profile, providers, referral, reviews, safety, service, settings, tickets, uploads, vehicles
+from app.api.v1 import admin, auth, card, device_tokens, faq, favorites, fleet, garage_routes, jobs, marketplace, matching_routes, notifications, offers, payments, profile, providers, referral, reviews, safety, service, settings, tickets, uploads, vehicles
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
@@ -25,3 +25,4 @@ api_router.include_router(card.router)
 api_router.include_router(safety.router)
 api_router.include_router(device_tokens.router)
 api_router.include_router(offers.router)
+api_router.include_router(fleet.router)

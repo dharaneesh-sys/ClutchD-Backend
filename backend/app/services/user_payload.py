@@ -42,6 +42,9 @@ async def user_to_frontend_dict(db: AsyncSession, user: User) -> dict:
             "location": m.location_address,
             "rating": m.rating,
             "isOnline": m.available,
+            "kycStatus": "verified" if m.verified else ("submitted" if (m.aadhaar_photo_url or m.license_photo_url) else "pending"),
+            "aadhaarPhotoUrl": m.aadhaar_photo_url,
+            "licensePhotoUrl": m.license_photo_url,
         }
 
     if user.role == "garage":
@@ -60,6 +63,9 @@ async def user_to_frontend_dict(db: AsyncSession, user: User) -> dict:
             "mechanicCount": g.mechanic_count,
             "operatingHours": g.operating_hours,
             "rating": g.rating,
+            "kycStatus": "verified" if g.verified else ("submitted" if (g.aadhaar_photo_url or g.license_photo_url) else "pending"),
+            "aadhaarPhotoUrl": g.aadhaar_photo_url,
+            "licensePhotoUrl": g.license_photo_url,
         }
 
     if user.role == "admin":

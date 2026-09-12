@@ -147,6 +147,10 @@ async def profile_update_me(body: ProfileUpdateRequest, db: DbSession, user: Cur
             m.phone = body.phone
         if body.address is not None:
             m.location_address = body.address
+        if body.aadhaarPhotoUrl is not None:
+            m.aadhaar_photo_url = body.aadhaarPhotoUrl
+        if body.licensePhotoUrl is not None:
+            m.license_photo_url = body.licensePhotoUrl
         await db.flush()
         return {"status": "updated"}
 
@@ -163,6 +167,10 @@ async def profile_update_me(body: ProfileUpdateRequest, db: DbSession, user: Cur
             g.phone = body.phone
         if body.address is not None:
             g.location_address = body.address
+        if body.aadhaarPhotoUrl is not None:
+            g.aadhaar_photo_url = body.aadhaarPhotoUrl
+        if body.licensePhotoUrl is not None:
+            g.license_photo_url = body.licensePhotoUrl
         await db.flush()
         return {"status": "updated"}
 
