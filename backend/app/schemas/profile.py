@@ -11,6 +11,8 @@ class ProfileUpdateRequest(BaseModel):
     full_name: str | None = Field(None, max_length=255)
     phone: str | None = Field(None, max_length=32)
     address: str | None = Field(None, max_length=512)
+    aadhaarPhotoUrl: str | None = Field(None, max_length=1024)
+    licensePhotoUrl: str | None = Field(None, max_length=1024)
 
 
 class CustomerProfileResponse(BaseModel):
