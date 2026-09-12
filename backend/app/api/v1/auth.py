@@ -33,7 +33,7 @@ from app.schemas.auth import (
 from app.services import auth_service
 from app.services.auth_service import AuthError
 from app.services.user_payload import user_to_frontend_dict
-from app.api.v1.token import set_refresh_cookie, clear_refresh_cookie, set_access_token_cookie, clear_access_token_cookie
+from app.api.v1.token import auth_response, set_refresh_cookie, clear_refresh_cookie, set_access_token_cookie, clear_access_token_cookie
 from app.core.redis_client import get_redis
 import logging
 
@@ -76,10 +76,7 @@ async def login_route(request: Request, body: LoginRequest, db: DbSession):
         await r.delete(fail_key)
 
     refresh = create_refresh_token(user_id)
-    response = JSONResponse(content=TokenResponse(token=token, user=user_payload).model_dump())
-    set_refresh_cookie(response, refresh)
-    set_access_token_cookie(response, token)
-    return response
+    return auth_response(token=token, user=user_payload, refresh=refresh)
 
 
 @router.post("/signup", response_model=TokenResponse)
@@ -88,10 +85,7 @@ async def signup_route(request: Request, body: SignupPayload, db: DbSession):
     try:
         token, user_payload, user_id = await auth_service.signup_from_payload(db, body)
         refresh = create_refresh_token(user_id)
-        response = JSONResponse(content=TokenResponse(token=token, user=user_payload).model_dump())
-        set_refresh_cookie(response, refresh)
-        set_access_token_cookie(response, token)
-        return response
+        return auth_response(token=token, user=user_payload, refresh=refresh)
     except AuthError as e:
         raise _auth_exc(e) from e
     except ValueError as e:
@@ -104,10 +98,7 @@ async def register_customer(request: Request, body: CustomerRegister, db: DbSess
     try:
         token, user_payload, user_id = await auth_service.register_customer(db, body)
         refresh = create_refresh_token(user_id)
-        response = JSONResponse(content=TokenResponse(token=token, user=user_payload).model_dump())
-        set_refresh_cookie(response, refresh)
-        set_access_token_cookie(response, token)
-        return response
+        return auth_response(token=token, user=user_payload, refresh=refresh)
     except AuthError as e:
         raise _auth_exc(e) from e
 
@@ -118,10 +109,7 @@ async def register_mechanic(request: Request, body: MechanicRegister, db: DbSess
     try:
         token, user_payload, user_id = await auth_service.register_mechanic(db, body)
         refresh = create_refresh_token(user_id)
-        response = JSONResponse(content=TokenResponse(token=token, user=user_payload).model_dump())
-        set_refresh_cookie(response, refresh)
-        set_access_token_cookie(response, token)
-        return response
+        return auth_response(token=token, user=user_payload, refresh=refresh)
     except AuthError as e:
         raise _auth_exc(e) from e
 
@@ -132,10 +120,7 @@ async def register_garage(request: Request, body: GarageRegister, db: DbSession)
     try:
         token, user_payload, user_id = await auth_service.register_garage(db, body)
         refresh = create_refresh_token(user_id)
-        response = JSONResponse(content=TokenResponse(token=token, user=user_payload).model_dump())
-        set_refresh_cookie(response, refresh)
-        set_access_token_cookie(response, token)
-        return response
+        return auth_response(token=token, user=user_payload, refresh=refresh)
     except AuthError as e:
         raise _auth_exc(e) from e
 
@@ -270,10 +255,7 @@ async def oauth_google(request: Request, body: GoogleOAuthRequest, db: DbSession
     token = create_access_token(str(user.id), {"role": user.role})
     refresh = create_refresh_token(str(user.id))
     payload = await user_to_frontend_dict(db, user)
-    response = JSONResponse(content=TokenResponse(token=token, user=payload).model_dump())
-    set_refresh_cookie(response, refresh)
-    set_access_token_cookie(response, token)
-    return response
+    return auth_response(token=token, user=payload, refresh=refresh)
 
 
 @router.post("/forgot-password/request", response_model=MessageResponse)

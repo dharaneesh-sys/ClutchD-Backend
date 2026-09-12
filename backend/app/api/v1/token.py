@@ -20,6 +20,19 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 class RefreshResponse(BaseModel):
     token: str
+    refresh_token: str | None = None
+
+
+def auth_response(*, token: str, user: dict, refresh: str) -> JSONResponse:
+    """Build the standard auth response: tokens in the body (WebView-safe;
+    Android WebViews block third-party cookies so the refresh cookie alone is
+    not reliable) AND cookies set for browser/PWA clients."""
+    response = JSONResponse(
+        content={"token": token, "user": user, "refresh_token": refresh}
+    )
+    set_refresh_cookie(response, refresh)
+    set_access_token_cookie(response, token)
+    return response
 
 
 @router.post("/refresh")  # response_model deliberately omitted — we return JSONResponse to set cookies
@@ -28,8 +41,13 @@ async def refresh_token(
     db: DbSession,
     clutchd_refresh: str | None = Cookie(None),
 ):
-    """Issue a new access token from a valid refresh token cookie."""
-    token = clutchd_refresh
+    """Issue a new access token from a valid refresh token.
+
+    Token sources, in order: X-Refresh-Token header (primary for the
+    Capacitor WebView, where third-party cookies are blocked), the
+    clutchd_refresh cookie (browser/PWA), then the Authorization bearer.
+    """
+    token = request.headers.get("X-Refresh-Token") or clutchd_refresh
     if not token:
         # Fallback: check Authorization header for refresh token
         auth = request.headers.get("Authorization", "")
@@ -60,7 +78,9 @@ async def refresh_token(
 
     new_refresh = create_refresh_token(str(user.id))
     new_access = create_access_token(str(user.id), {"role": user.role})
-    response = JSONResponse(content=RefreshResponse(token=new_access).model_dump())
+    response = JSONResponse(
+        content=RefreshResponse(token=new_access, refresh_token=new_refresh).model_dump()
+    )
     set_refresh_cookie(response, new_refresh)
     set_access_token_cookie(response, new_access)
     return response
