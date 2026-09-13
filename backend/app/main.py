@@ -329,6 +329,8 @@ async def websocket_user(websocket: WebSocket):
 
             if msg.get("type") == "CHAT_MESSAGE":
                 from app.models.job import Job as _ChatJob
+                from app.models.mechanic import Mechanic as _ChatMechanic
+                from app.models.garage import Garage as _ChatGarage
 
                 payload = msg.get("payload") or {}
                 raw_job_id = payload.get("jobId") or payload.get("job_id")
@@ -353,16 +355,16 @@ async def websocket_user(websocket: WebSocket):
                     is_customer = job_row.user_id == user.id
                     is_provider = (job_row.assigned_type == "mechanic" and job_row.assigned_mechanic_id is not None and (
                         await cdb.execute(
-                            select(Mechanic.id).where(
-                                Mechanic.id == job_row.assigned_mechanic_id,
-                                Mechanic.user_id == user.id,
+                            select(_ChatMechanic.id).where(
+                                _ChatMechanic.id == job_row.assigned_mechanic_id,
+                                _ChatMechanic.user_id == user.id,
                             )
                         )).scalar_one_or_none() is not None) or (
                         job_row.assigned_type == "garage" and job_row.assigned_garage_id is not None and (
                             await cdb.execute(
-                                select(Garage.id).where(
-                                    Garage.id == job_row.assigned_garage_id,
-                                    Garage.user_id == user.id,
+                                select(_ChatGarage.id).where(
+                                    _ChatGarage.id == job_row.assigned_garage_id,
+                                    _ChatGarage.user_id == user.id,
                                 )
                             )).scalar_one_or_none() is not None)
                     if not (is_customer or is_provider or user.is_superuser):
@@ -394,18 +396,14 @@ async def websocket_user(websocket: WebSocket):
                 # Deliver to the other participant (and echo to sender for ID sync)
                 await manager.send_json_to_user(str(job_row.user_id), outbound)
                 if job_row.assigned_type == "mechanic" and job_row.assigned_mechanic_id:
-                    from app.models.mechanic import Mechanic as _M
-
                     async with AsyncSessionLocal() as cdb2:
-                        pr = await cdb2.execute(select(_M.user_id).where(_M.id == job_row.assigned_mechanic_id))
+                        pr = await cdb2.execute(select(_ChatMechanic.user_id).where(_ChatMechanic.id == job_row.assigned_mechanic_id))
                         provider_uid = pr.scalar_one_or_none()
                     if provider_uid:
                         await manager.send_json_to_user(str(provider_uid), outbound)
                 elif job_row.assigned_type == "garage" and job_row.assigned_garage_id:
-                    from app.models.garage import Garage as _G
-
                     async with AsyncSessionLocal() as cdb3:
-                        pr = await cdb3.execute(select(_G.user_id).where(_G.id == job_row.assigned_garage_id))
+                        pr = await cdb3.execute(select(_ChatGarage.user_id).where(_ChatGarage.id == job_row.assigned_garage_id))
                         provider_uid = pr.scalar_one_or_none()
                     if provider_uid:
                         await manager.send_json_to_user(str(provider_uid), outbound)
