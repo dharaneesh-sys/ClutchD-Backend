@@ -4,6 +4,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.garage import Garage
 from app.models.mechanic import Mechanic
+from app.models.seller import Seller
 from app.models.new_models import CustomerProfile
 from app.models.user import User
 
@@ -68,6 +69,22 @@ async def user_to_frontend_dict(db: AsyncSession, user: User) -> dict:
             "kycNote": g.kyc_note,
             "aadhaarPhotoUrl": g.aadhaar_photo_url,
             "licensePhotoUrl": g.license_photo_url,
+        }
+
+    if user.role == "seller":
+        r = await db.execute(select(Seller).where(Seller.user_id == user.id))
+        s = r.scalar_one_or_none()
+        if not s:
+            base["name"] = base["email"].split("@")[0]
+            return base
+        return {
+            **base,
+            "name": s.store_name,
+            "ownerName": s.owner_name,
+            "phone": s.phone,
+            "location": s.location_address,
+            "storeName": s.store_name,
+            "rating": s.rating,
         }
 
     if user.role == "admin":

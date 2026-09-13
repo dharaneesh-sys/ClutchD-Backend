@@ -220,11 +220,16 @@ async def _seller_display_name(db: DbSession, user: User) -> str:
     """Best-effort seller display name: garage/mechanic profile, else email prefix."""
     from app.models.garage import Garage
     from app.models.mechanic import Mechanic
+    from app.models.seller import Seller
 
     result = await db.execute(select(Garage).where(Garage.user_id == user.id))
     garage = result.scalar_one_or_none()
     if garage and garage.garage_name:
         return garage.garage_name
+    result = await db.execute(select(Seller).where(Seller.user_id == user.id))
+    seller = result.scalar_one_or_none()
+    if seller and seller.store_name:
+        return seller.store_name
     result = await db.execute(select(Mechanic).where(Mechanic.user_id == user.id))
     mechanic = result.scalar_one_or_none()
     if mechanic and mechanic.full_name:
@@ -307,7 +312,7 @@ async def _ensure_owner_or_admin(db: DbSession, product: MarketplaceProduct, use
     raise HTTPException(status_code=403, detail="Not your product")
 
 
-_seller_roles = require_roles(UserRole.mechanic, UserRole.garage, UserRole.admin)
+_seller_roles = require_roles(UserRole.seller, UserRole.mechanic, UserRole.garage, UserRole.admin)
 
 
 @router.post("/products", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)

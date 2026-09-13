@@ -5,8 +5,9 @@ from app.core.config import get_settings
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.garage import Garage
 from app.models.mechanic import Mechanic
+from app.models.seller import Seller
 from app.models.user import User
-from app.schemas.auth import CustomerRegister, GarageRegister, MechanicRegister, SignupPayload
+from app.schemas.auth import CustomerRegister, GarageRegister, MechanicRegister, SellerRegister, SignupPayload
 from app.services.user_payload import user_to_frontend_dict
 
 
@@ -135,6 +136,17 @@ async def signup_from_payload(db: AsyncSession, body: SignupPayload) -> tuple[st
             licensePhotoUrl=body.licensePhotoUrl,
         )
         return await register_mechanic(db, mr)
+    if body.role == "seller":
+        sr = SellerRegister(
+            email=body.email or "",
+            password=body.password or "",
+            confirmPassword=body.confirmPassword,
+            storeName=body.storeName or "",
+            ownerName=body.fullName or "",
+            phone=body.phone or "",
+            location=body.location or "",
+        )
+        return await register_seller(db, sr)
     gr = GarageRegister(
         email=body.email or "",
         password=body.password or "",
@@ -152,6 +164,29 @@ async def signup_from_payload(db: AsyncSession, body: SignupPayload) -> tuple[st
         licensePhotoUrl=body.licensePhotoUrl,
     )
     return await register_garage(db, gr)
+
+
+async def register_seller(db: AsyncSession, data: SellerRegister) -> tuple[str, dict, str]:
+    await _ensure_email_free(db, data.email)
+    user = User(
+        email=data.email.lower(),
+        password_hash=hash_password(data.password),
+        role="seller",
+    )
+    db.add(user)
+    await db.flush()
+    s = Seller(
+        user_id=user.id,
+        store_name=data.storeName,
+        owner_name=data.ownerName or "",
+        phone=data.phone or "",
+        location_address=data.location or "",
+    )
+    db.add(s)
+    await db.flush()
+    token = create_access_token(str(user.id), {"role": user.role})
+    payload = await user_to_frontend_dict(db, user)
+    return token, payload, str(user.id)
 
 
 async def login(db: AsyncSession, email: str, password: str) -> tuple[str, dict, str]:

@@ -5,6 +5,7 @@ class UserRole(str, enum.Enum):
     customer = "customer"
     mechanic = "mechanic"
     garage = "garage"
+    seller = "seller"
     admin = "admin"
 
 

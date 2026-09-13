@@ -46,9 +46,19 @@ class GarageRegister(BaseModel):
     licensePhotoUrl: str | None = Field(None, max_length=1024)
 
 
+class SellerRegister(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6, max_length=128)
+    confirmPassword: str | None = Field(None, max_length=128)
+    storeName: str = Field(min_length=2, max_length=200)
+    ownerName: str | None = Field(None, max_length=100)
+    phone: str | None = Field(None, max_length=15)
+    location: str | None = Field(None, max_length=500)
+
+
 class SignupPayload(BaseModel):
     """Unified signup body used by the frontend."""
-    role: str = Field(pattern="^(customer|mechanic|garage)$")
+    role: str = Field(pattern="^(customer|mechanic|garage|seller)$")
     email: EmailStr | None = None
     password: str | None = Field(None, max_length=128)
     confirmPassword: str | None = Field(None, max_length=128)
@@ -62,6 +72,7 @@ class SignupPayload(BaseModel):
     services: list[str] | None = Field(None, max_length=50)
     mechanicCount: str | None = Field(None, max_length=5)
     operatingHours: str | None = Field(None, max_length=50)
+    storeName: str | None = Field(None, max_length=200)
     latitude: float | None = Field(None, ge=-90, le=90)
     longitude: float | None = Field(None, ge=-180, le=180)
     aadhaarPhotoUrl: str | None = Field(None, max_length=1024)
@@ -70,7 +81,7 @@ class SignupPayload(BaseModel):
 
 class GoogleOAuthRequest(BaseModel):
     credential: str = Field(max_length=8192)
-    role: str | None = Field(None, pattern="^(customer|mechanic|garage)$")
+    role: str | None = Field(None, pattern="^(customer|mechanic|garage|seller)$")
     state: str | None = Field(None, min_length=8, max_length=128)
 
 

@@ -248,6 +248,17 @@ async def oauth_google(request: Request, body: GoogleOAuthRequest, db: DbSession
             )
             db.add(g)
             await db.flush()
+        elif desired_role == "seller":
+            local = email.split("@")[0].replace(".", " ").title()
+            from app.models.seller import Seller
+
+            s = Seller(
+                user_id=user.id,
+                store_name=(data.get("name") or local or "Parts Store").strip() or "Parts Store",
+                owner_name=local or "Owner",
+            )
+            db.add(s)
+            await db.flush()
     else:
         # If user exists, don't silently change role.
         if body.role and user.role != body.role:
