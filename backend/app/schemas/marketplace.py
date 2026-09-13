@@ -105,6 +105,13 @@ class ProductUpdate(BaseModel):
             raise ValueError("Name must not be blank")
         return v.strip() if isinstance(v, str) else v
 
+    @field_validator("image")
+    @classmethod
+    def validate_image_not_blank(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError("Part photo must not be blank")
+        return v.strip() if isinstance(v, str) else v
+
 
 # ── Offer ────────────────────────────────────────────────────────────────
 
