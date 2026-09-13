@@ -305,10 +305,36 @@ async def forgot_password_request(request: Request, body: ForgotPasswordRequest,
         # Track failed attempts separately
         await r.delete(f"reset_attempts:{email}")
     
-    # Log reset event for debugging (never log the actual code)
-    logger.info("Password reset code generated for %s", user.email)
-    
-    return MessageResponse(message="If an account with that email exists, a password reset code has been generated.")
+    # Deliver the code. Email first; if no SMTP is configured we surface the
+    # code in the response so the flow remains completable (dev/staging mode).
+    from app.models.new_models import CustomerProfile
+
+    cp_res = await db.execute(
+        select(CustomerProfile).where(CustomerProfile.user_id == user.id)
+    )
+    cp = cp_res.scalar_one_or_none()
+    display_name = (cp.full_name if cp and cp.full_name else "") or ""
+
+    from app.services.mail_service import send_reset_email
+
+    sent = await asyncio.to_thread(
+        send_reset_email, to_email=email, name=display_name, code=code
+    )
+    if sent:
+        logger.info("Password reset code emailed to %s", user.email)
+        return MessageResponse(
+            message="If an account with that email exists, a password reset code has been sent."
+        )
+
+    # No delivery channel configured — return the code with a clear warning so
+    # the user can still complete the reset instead of being stuck.
+    logger.warning("Reset code for %s surfaced in API response (no SMTP configured)", user.email)
+    return MessageResponse(
+        message=(
+            "Email delivery is not configured on this server. "
+            f"Dev-mode reset code for {email}: {code}"
+        )
+    )
 
 
 @router.post("/forgot-password/reset", response_model=MessageResponse)

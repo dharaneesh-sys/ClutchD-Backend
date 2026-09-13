@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     redis_password: str | None = None
 
+    # SMTP email delivery for password-reset codes (optional; when unset the
+    # reset code is surfaced via the dev-mode fallback in auth.py).
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+    smtp_tls: str = "true"
+
     jwt_secret_key: str = "change-me-in-production-use-openssl-rand-hex-32"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 15
