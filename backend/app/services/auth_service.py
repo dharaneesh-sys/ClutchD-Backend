@@ -62,6 +62,7 @@ async def register_mechanic(db: AsyncSession, data: MechanicRegister) -> tuple[s
         available=True,
         aadhaar_photo_url=data.aadhaarPhotoUrl,
         license_photo_url=data.licensePhotoUrl,
+        kyc_status="submitted" if (data.aadhaarPhotoUrl or data.licensePhotoUrl) else "pending",
     )
     db.add(mech)
     await db.flush()
@@ -101,6 +102,7 @@ async def register_garage(db: AsyncSession, data: GarageRegister) -> tuple[str, 
         verified=verified,
         aadhaar_photo_url=data.aadhaarPhotoUrl,
         license_photo_url=data.licensePhotoUrl,
+        kyc_status="submitted" if (data.aadhaarPhotoUrl or data.licensePhotoUrl) else "pending",
     )
     db.add(g)
     await db.flush()

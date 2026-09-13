@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -159,53 +159,118 @@ async def verify_garage(garage_id: UUID, body: VerifyBody, db: DbSession, user: 
     return {"ok": True, "verified": g.verified}
 
 
-# ── Pending KYC ───────────────────────────────────────────────
+# ── KYC Review ────────────────────────────────────────────────
+KYC_STATUSES = ("pending", "submitted", "verified", "rejected")
+
+
+def _kyc_submitted_at(profile) -> str:
+    """ISO-8601 UTC string for when the provider applied, or '' if unknown."""
+    if not profile.created_at:
+        return ""
+    try:
+        dt = profile.created_at if profile.created_at.tzinfo else profile.created_at.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat()
+    except (ValueError, OSError):
+        return ""
+
+
+def _kyc_app_record(profile, profile_type: str) -> dict:
+    """Shape a mechanic/garage profile for the KYC review panel."""
+    u = profile.user
+    docs = []
+    if profile.aadhaar_photo_url:
+        docs.append({"kind": "aadhaar", "label": "Aadhaar Card", "url": profile.aadhaar_photo_url})
+    if profile.license_photo_url:
+        docs.append({"kind": "license", "label": "Driving License", "url": profile.license_photo_url})
+    return {
+        "id": str(profile.id),
+        "userId": str(profile.user_id) if profile.user_id else None,
+        "profileType": profile_type,
+        "name": profile.full_name if profile_type == "mechanic" else profile.garage_name,
+        "ownerName": profile.owner_name if profile_type == "garage" else None,
+        "type": "Independent Mechanic" if profile_type == "mechanic" else "Garage Enterprise",
+        "email": u.email if u else None,
+        "phone": profile.phone or None,
+        "kycStatus": profile.kyc_status,
+        "kycNote": profile.kyc_note,
+        "verified": profile.verified,
+        "submittedAt": _kyc_submitted_at(profile),
+        "documents": docs,
+    }
+
+
 @router.get("/kyc/pending")
-async def list_pending_kyc(db: DbSession, user: AdminUser):
-    # Unverified mechanics
+async def list_kyc(
+    db: DbSession,
+    user: AdminUser,
+    status_filter: str | None = Query(None, alias="status", pattern="^(pending|submitted|verified|rejected)$"),
+):
+    """KYC review queue with real document photos.
+
+    Defaults to actionable applications (pending + submitted, i.e. awaiting
+    review). Pass ?status= to inspect verified/rejected history too.
+    """
+    statuses = (status_filter,) if status_filter else ("pending", "submitted")
+
     mech_q = (
         select(Mechanic)
         .options(joinedload(Mechanic.user))
-        .where(Mechanic.verified == False)
+        .where(Mechanic.kyc_status.in_(statuses))
+        .order_by(Mechanic.created_at.desc())
     )
     mech_result = await db.execute(mech_q)
     mechanics = mech_result.unique().scalars().all()
 
-    # Unverified garages
     garage_q = (
         select(Garage)
         .options(joinedload(Garage.user))
-        .where(Garage.verified == False)
+        .where(Garage.kyc_status.in_(statuses))
+        .order_by(Garage.created_at.desc())
     )
     garage_result = await db.execute(garage_q)
     garages = garage_result.unique().scalars().all()
 
-    applications = []
-    for m in mechanics:
-        applications.append({
-            "id": str(m.id),
-            "name": m.full_name,
-            "type": "Independent Mechanic",
-            "profileType": "mechanic",
-            "submitted": m.created_at.strftime("%d %b %Y %I:%M %p") if m.created_at else "—",
-            "status": "Pending",
-            "documents": ["Aadhaar", "Driving License", "Skill Certificate"],
-        })
-    for g in garages:
-        applications.append({
-            "id": str(g.id),
-            "name": g.garage_name,
-            "type": "Garage Enterprise",
-            "profileType": "garage",
-            "submitted": g.created_at.strftime("%d %b %Y %I:%M %p") if g.created_at else "—",
-            "status": "Pending",
-            "documents": ["GST Registration", "Shop Establishment Act", "Owner ID"],
-        })
-
-    # Sort by submitted descending
-    applications.sort(key=lambda a: a["submitted"], reverse=True)
+    applications = [_kyc_app_record(m, "mechanic") for m in mechanics]
+    applications += [_kyc_app_record(g, "garage") for g in garages]
+    applications.sort(key=lambda a: a["submittedAt"], reverse=True)
 
     return {"applications": applications}
+
+
+class KycReviewBody(BaseModel):
+    action: Literal["approve", "reject"]
+    note: str | None = Field(None, max_length=1024)
+
+
+@router.patch("/kyc/{profile_type}/{profile_id}/review")
+@audit_log("kyc_review", "profile", entity_id_arg="profile_id")
+async def review_kyc(
+    profile_type: str,
+    profile_id: UUID,
+    body: KycReviewBody,
+    db: DbSession,
+    user: AdminUser,
+):
+    """Approve or reject a provider's KYC submission."""
+    if profile_type not in ("mechanic", "garage"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="profile_type must be 'mechanic' or 'garage'")
+
+    model = Mechanic if profile_type == "mechanic" else Garage
+    result = await db.execute(select(model).where(model.id == profile_id))
+    profile = result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=404, detail=f"{profile_type.capitalize()} not found")
+
+    if body.action == "approve":
+        profile.kyc_status = "verified"
+        profile.verified = True
+    else:
+        profile.kyc_status = "rejected"
+        profile.verified = False
+    profile.kyc_note = body.note
+    await db.flush()
+
+    return {"ok": True, "id": str(profile.id), "profileType": profile_type, "kycStatus": profile.kyc_status, "verified": profile.verified, "kycNote": profile.kyc_note}
 
 
 # ── Analytics ─────────────────────────────────────────────────

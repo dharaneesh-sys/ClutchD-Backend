@@ -78,7 +78,8 @@ async def profile_get_me(db: DbSession, user: CurrentUser):
             "rating": m.rating,
             "isOnline": m.available,
             "profile_photo_url": None,
-            "kycStatus": "verified" if m.verified else ("submitted" if (m.aadhaar_photo_url or m.license_photo_url) else "pending"),
+            "kycStatus": m.kyc_status or ("verified" if m.verified else ("submitted" if (m.aadhaar_photo_url or m.license_photo_url) else "pending")),
+            "kycNote": m.kyc_note,
             "aadhaarPhotoUrl": m.aadhaar_photo_url,
             "licensePhotoUrl": m.license_photo_url,
         }
@@ -101,7 +102,8 @@ async def profile_get_me(db: DbSession, user: CurrentUser):
             "operating_hours": g.operating_hours,
             "rating": g.rating,
             "profile_photo_url": None,
-            "kycStatus": "verified" if g.verified else ("submitted" if (g.aadhaar_photo_url or g.license_photo_url) else "pending"),
+            "kycStatus": g.kyc_status or ("verified" if g.verified else ("submitted" if (g.aadhaar_photo_url or g.license_photo_url) else "pending")),
+            "kycNote": g.kyc_note,
             "aadhaarPhotoUrl": g.aadhaar_photo_url,
             "licensePhotoUrl": g.license_photo_url,
         }
@@ -157,6 +159,10 @@ async def profile_update_me(body: ProfileUpdateRequest, db: DbSession, user: Cur
             m.aadhaar_photo_url = body.aadhaarPhotoUrl
         if body.licensePhotoUrl is not None:
             m.license_photo_url = body.licensePhotoUrl
+        if body.aadhaarPhotoUrl is not None or body.licensePhotoUrl is not None:
+            if m.kyc_status in (None, "", "pending", "rejected"):
+                m.kyc_status = "submitted"
+                m.kyc_note = None
         await db.flush()
         return {"status": "updated"}
 
@@ -177,6 +183,10 @@ async def profile_update_me(body: ProfileUpdateRequest, db: DbSession, user: Cur
             g.aadhaar_photo_url = body.aadhaarPhotoUrl
         if body.licensePhotoUrl is not None:
             g.license_photo_url = body.licensePhotoUrl
+        if body.aadhaarPhotoUrl is not None or body.licensePhotoUrl is not None:
+            if g.kyc_status in (None, "", "pending", "rejected"):
+                g.kyc_status = "submitted"
+                g.kyc_note = None
         await db.flush()
         return {"status": "updated"}
 

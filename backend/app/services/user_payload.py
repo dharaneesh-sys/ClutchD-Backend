@@ -42,7 +42,8 @@ async def user_to_frontend_dict(db: AsyncSession, user: User) -> dict:
             "location": m.location_address,
             "rating": m.rating,
             "isOnline": m.available,
-            "kycStatus": "verified" if m.verified else ("submitted" if (m.aadhaar_photo_url or m.license_photo_url) else "pending"),
+            "kycStatus": m.kyc_status or ("verified" if m.verified else ("submitted" if (m.aadhaar_photo_url or m.license_photo_url) else "pending")),
+            "kycNote": m.kyc_note,
             "aadhaarPhotoUrl": m.aadhaar_photo_url,
             "licensePhotoUrl": m.license_photo_url,
         }
@@ -63,7 +64,8 @@ async def user_to_frontend_dict(db: AsyncSession, user: User) -> dict:
             "mechanicCount": g.mechanic_count,
             "operatingHours": g.operating_hours,
             "rating": g.rating,
-            "kycStatus": "verified" if g.verified else ("submitted" if (g.aadhaar_photo_url or g.license_photo_url) else "pending"),
+            "kycStatus": g.kyc_status or ("verified" if g.verified else ("submitted" if (g.aadhaar_photo_url or g.license_photo_url) else "pending")),
+            "kycNote": g.kyc_note,
             "aadhaarPhotoUrl": g.aadhaar_photo_url,
             "licensePhotoUrl": g.license_photo_url,
         }

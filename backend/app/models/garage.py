@@ -29,6 +29,8 @@ class Garage(Base):
     upi_id: Mapped[str | None] = mapped_column(String(128), nullable=True, comment="Garage UPI ID for payouts")
     aadhaar_photo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     license_photo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    kyc_status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending", comment="pending|submitted|verified|rejected")
+    kyc_note: Mapped[str | None] = mapped_column(String(1024), nullable=True, comment="Admin review note (e.g. rejection reason)")
     penalized: Mapped[bool] = mapped_column(Boolean, default=False)
     penalty_amount: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="Penalty amount in paise")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
