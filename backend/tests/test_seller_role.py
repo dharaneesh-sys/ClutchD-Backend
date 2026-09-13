@@ -52,10 +52,12 @@ async def test_seller_can_create_product(client: AsyncClient, db_session: AsyncS
         "name": "Test Brake Pad Set",
         "price": 1249,
         "description": "Front pads",
+        "image": "/static/uploads/test-brake-pad.png",
     })
     assert resp.status_code == 201, resp.text
     data = resp.json()
     assert data["vendor"] == "Product Parts Co"
+    assert data["image"] == "/static/uploads/test-brake-pad.png"
 
 
 async def test_customer_cannot_create_product(client: AsyncClient, db_session: AsyncSession):
@@ -85,6 +87,7 @@ async def test_seller_my_listings(client: AsyncClient, db_session: AsyncSession)
     created = await client.post("/api/marketplace/products", headers=headers, json={
         "name": "My Listing Part",
         "price": 500,
+        "image": "/static/uploads/my-listing-part.png",
     })
     assert created.status_code == 201, created.text
 
@@ -92,6 +95,30 @@ async def test_seller_my_listings(client: AsyncClient, db_session: AsyncSession)
     assert resp.status_code == 200, resp.text
     names = [p["name"] for p in resp.json().get("products", [])]
     assert "My Listing Part" in names
+
+
+async def test_create_product_without_image_rejected(client: AsyncClient, db_session: AsyncSession):
+    """Part photo is compulsory: creating a listing without an image 422s."""
+    await client.post("/api/auth/signup", json={
+        "role": "seller",
+        "email": "seller-noimg-test@example.com",
+        "password": "TestPass123!",
+        "storeName": "No Image Co",
+    })
+    headers = await _headers_for(db_session, "seller-noimg-test@example.com")
+
+    resp = await client.post("/api/marketplace/products", headers=headers, json={
+        "name": "No Photo Part",
+        "price": 300,
+    })
+    assert resp.status_code == 422, resp.text
+
+    resp = await client.post("/api/marketplace/products", headers=headers, json={
+        "name": "Blank Photo Part",
+        "price": 300,
+        "image": "   ",
+    })
+    assert resp.status_code == 422, resp.text
 
 
 async def test_seller_login_returns_store_name(client: AsyncClient, db_session: AsyncSession):

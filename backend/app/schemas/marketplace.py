@@ -62,7 +62,10 @@ class ProductCreate(BaseModel):
     category: str | None = Field(default=None, max_length=100)
     category_id: UUID | None = None
     vendor_id: UUID | None = None
-    image: str | None = Field(default=None, max_length=500)
+    # Photo of the actual part is compulsory for new listings.
+    # Accepts the URL returned by POST /api/uploads (/static/uploads/...)
+    # or an absolute http(s) URL.
+    image: str = Field(min_length=1, max_length=500)
     availability: bool = True
     delivery_time: str | None = Field(default=None, max_length=50)
 
@@ -71,6 +74,13 @@ class ProductCreate(BaseModel):
     def validate_name_not_blank(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("Name must not be blank")
+        return v.strip()
+
+    @field_validator("image")
+    @classmethod
+    def validate_image_not_blank(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Part photo is required")
         return v.strip()
 
 
@@ -84,7 +94,7 @@ class ProductUpdate(BaseModel):
     category: str | None = Field(default=None, max_length=100)
     category_id: UUID | None = None
     vendor_id: UUID | None = None
-    image: str | None = Field(default=None, max_length=500)
+    image: str | None = Field(default=None, min_length=1, max_length=500)
     availability: bool | None = None
     delivery_time: str | None = Field(default=None, max_length=50)
 

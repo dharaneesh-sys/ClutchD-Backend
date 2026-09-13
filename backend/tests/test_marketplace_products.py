@@ -50,7 +50,12 @@ async def _make_user(db_session: AsyncSession, role: str, email: str, superuser:
 
 
 def _payload(**overrides) -> dict:
-    base = {"name": "Brake Pad Set", "price": 1499.50, "brand": "Acme"}
+    base = {
+        "name": "Brake Pad Set",
+        "price": 1499.50,
+        "brand": "Acme",
+        "image": "/static/uploads/brake-pad-set.png",
+    }
     base.update(overrides)
     return base
 
