@@ -16,6 +16,7 @@ from app.models.marketplace import (
 )
 from app.models.mechanic import Mechanic
 from app.models.seller import Seller
+from app.models.chat import ChatMessage
 from app.models.new_models import (
     ClutchDCard,
     ClutchDOffer,
@@ -65,4 +66,5 @@ __all__ = [
     "MarketplaceOrder",
     "MarketplaceOrderItem",
     "MarketplaceProductReview",
+    "ChatMessage",
 ]

@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import UUID
 import uuid
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +19,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 
 from app.api.v1.router import api_router
 from app.api.v1.token import router as token_router
+from app.api.deps import get_current_user, DbSession
 from app.core.config import get_settings
 from app.core.firebase import init_firebase
 from app.core.limiter import limiter as app_limiter
@@ -171,6 +172,85 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/api/chat/history/{job_id}")
+async def chat_history(job_id: UUID, user: User = Depends(get_current_user), db: DbSession = None):
+    """Chat history for a job — customer or assigned provider only."""
+    return await _chat_history_impl(job_id, user, db=db)
+
+
+async def _chat_history_impl(job_id: UUID, user, db=None):
+    from app.models.chat import ChatMessage
+    from app.models.job import Job
+
+    if user is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    owns_db = db is None
+    if owns_db:
+        db = AsyncSessionLocal()
+    try:
+        jr = await db.execute(select(Job).where(Job.id == job_id))
+        job_row = jr.scalar_one_or_none()
+        if not job_row:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        is_customer = job_row.user_id == user.id
+        is_provider = False
+        if job_row.assigned_type == "mechanic" and job_row.assigned_mechanic_id:
+            from app.models.mechanic import Mechanic
+
+            r = await db.execute(
+                select(Mechanic.id).where(
+                    Mechanic.id == job_row.assigned_mechanic_id,
+                    Mechanic.user_id == user.id,
+                )
+            )
+            is_provider = r.scalar_one_or_none() is not None
+        elif job_row.assigned_type == "garage" and job_row.assigned_garage_id:
+            from app.models.garage import Garage
+
+            r = await db.execute(
+                select(Garage.id).where(
+                    Garage.id == job_row.assigned_garage_id,
+                    Garage.user_id == user.id,
+                )
+            )
+            is_provider = r.scalar_one_or_none() is not None
+
+        if not (is_customer or is_provider or user.is_superuser):
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=403, detail="Not a participant of this job")
+
+        cr = await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.job_id == job_id)
+            .order_by(ChatMessage.created_at.asc())
+        )
+        messages = cr.scalars().all()
+        return {
+            "messages": [
+                {
+                    "id": str(m.id),
+                    "jobId": str(m.job_id),
+                    "senderId": str(m.sender_id),
+                    "senderRole": m.sender_role,
+                    "text": m.text,
+                    "imageUrl": m.image_url,
+                    "createdAt": m.created_at.isoformat() if m.created_at else None,
+                }
+                for m in messages
+            ]
+        }
+    finally:
+        if owns_db:
+            await db.close()
+
+
 
 
 
@@ -245,6 +325,88 @@ async def websocket_user(websocket: WebSocket):
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
+                continue
+
+            if msg.get("type") == "CHAT_MESSAGE":
+                payload = msg.get("payload") or {}
+                raw_job_id = payload.get("jobId") or payload.get("job_id")
+                text = payload.get("text")
+                image_url = payload.get("imageUrl") or payload.get("image_url")
+                if not raw_job_id or (not text and not image_url):
+                    continue
+                try:
+                    job_uuid = UUID(str(raw_job_id))
+                except ValueError:
+                    continue
+                text = (text or "")[:4000]
+
+                # Persist + relay. Verify participation: job's customer or assigned provider.
+                async with AsyncSessionLocal() as cdb:
+                    from app.models.chat import ChatMessage
+
+                    jr2 = await cdb.execute(select(Job).where(Job.id == job_uuid))
+                    job_row = jr2.scalar_one_or_none()
+                    if not job_row:
+                        continue
+                    is_customer = job_row.user_id == user.id
+                    is_provider = (job_row.assigned_type == "mechanic" and job_row.assigned_mechanic_id is not None and (
+                        await cdb.execute(
+                            select(Mechanic.id).where(
+                                Mechanic.id == job_row.assigned_mechanic_id,
+                                Mechanic.user_id == user.id,
+                            )
+                        )).scalar_one_or_none() is not None) or (
+                        job_row.assigned_type == "garage" and job_row.assigned_garage_id is not None and (
+                            await cdb.execute(
+                                select(Garage.id).where(
+                                    Garage.id == job_row.assigned_garage_id,
+                                    Garage.user_id == user.id,
+                                )
+                            )).scalar_one_or_none() is not None)
+                    if not (is_customer or is_provider or user.is_superuser):
+                        continue
+
+                    chat_msg = ChatMessage(
+                        job_id=job_uuid,
+                        sender_id=user.id,
+                        sender_role=user.role,
+                        text=text or None,
+                        image_url=image_url,
+                    )
+                    cdb.add(chat_msg)
+                    await cdb.commit()
+                    await cdb.refresh(chat_msg)
+
+                outbound = {
+                    "type": "CHAT_MESSAGE",
+                    "payload": {
+                        "id": str(chat_msg.id),
+                        "jobId": str(job_uuid),
+                        "senderId": str(user.id),
+                        "senderRole": user.role,
+                        "text": text,
+                        "imageUrl": image_url,
+                        "createdAt": chat_msg.created_at.isoformat() if chat_msg.created_at else None,
+                    },
+                }
+                # Deliver to the other participant (and echo to sender for ID sync)
+                await manager.send_json_to_user(str(job_row.user_id), outbound)
+                if job_row.assigned_type == "mechanic" and job_row.assigned_mechanic_id:
+                    from app.models.mechanic import Mechanic as _M
+
+                    async with AsyncSessionLocal() as cdb2:
+                        pr = await cdb2.execute(select(_M.user_id).where(_M.id == job_row.assigned_mechanic_id))
+                        provider_uid = pr.scalar_one_or_none()
+                    if provider_uid:
+                        await manager.send_json_to_user(str(provider_uid), outbound)
+                elif job_row.assigned_type == "garage" and job_row.assigned_garage_id:
+                    from app.models.garage import Garage as _G
+
+                    async with AsyncSessionLocal() as cdb3:
+                        pr = await cdb3.execute(select(_G.user_id).where(_G.id == job_row.assigned_garage_id))
+                        provider_uid = pr.scalar_one_or_none()
+                    if provider_uid:
+                        await manager.send_json_to_user(str(provider_uid), outbound)
                 continue
 
             if msg.get("type") == "MECHANIC_LOCATION" and user.role == "mechanic":
