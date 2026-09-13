@@ -328,6 +328,8 @@ async def websocket_user(websocket: WebSocket):
                 continue
 
             if msg.get("type") == "CHAT_MESSAGE":
+                from app.models.job import Job as _ChatJob
+
                 payload = msg.get("payload") or {}
                 raw_job_id = payload.get("jobId") or payload.get("job_id")
                 text = payload.get("text")
@@ -344,7 +346,7 @@ async def websocket_user(websocket: WebSocket):
                 async with AsyncSessionLocal() as cdb:
                     from app.models.chat import ChatMessage
 
-                    jr2 = await cdb.execute(select(Job).where(Job.id == job_uuid))
+                    jr2 = await cdb.execute(select(_ChatJob).where(_ChatJob.id == job_uuid))
                     job_row = jr2.scalar_one_or_none()
                     if not job_row:
                         continue
