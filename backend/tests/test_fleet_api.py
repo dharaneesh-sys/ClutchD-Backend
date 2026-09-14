@@ -150,3 +150,70 @@ async def test_get_fleet_owner_only(
         f"{BASE}/{fleet_id}", headers={"Authorization": f"Bearer {stoken}"}
     )
     assert res.status_code == 403
+
+
+# ── Fleet bookings (bulk service booking) ────────────────────────────────
+
+
+def _booking_payload(**overrides) -> dict:
+    b = {
+        "scheduledAt": "2026-09-20T10:30:00Z",
+        "vehicles": [
+            {"vehicleId": "fv-1", "vehicleName": "Tata Ace (TN38AB1001)", "serviceType": "general_service"},
+            {"vehicleName": "Ashok Leyland Dost (TN38CD2001)", "serviceType": "oil_change"},
+        ],
+        "subtotal": 5000,
+        "discountPercent": 5,
+        "total": 4750,
+    }
+    b.update(overrides)
+    return b
+
+
+async def test_create_booking_requires_auth(client: AsyncClient):
+    """FLEET9: POST /fleet/bookings without a token returns 401."""
+    res = await client.post(f"{BASE}/bookings", json=_booking_payload())
+    assert res.status_code == 401
+
+
+async def test_create_booking_no_fleet_404(
+    db_session: AsyncSession, client: AsyncClient, test_user: User
+):
+    """FLEET10: Booking without a fleet registration returns 404."""
+    headers = await _auth_header(test_user)
+    res = await client.post(f"{BASE}/bookings", json=_booking_payload(), headers=headers)
+    assert res.status_code == 404
+
+
+async def test_create_booking_201_and_list(
+    db_session: AsyncSession, client: AsyncClient, test_user: User
+):
+    """FLEET11: Registered fleet can create a booking and list it back."""
+    headers = await _auth_header(test_user)
+    await client.post(f"{BASE}/register", json=_body(contactEmail=test_user.email))
+
+    res = await client.post(f"{BASE}/bookings", json=_booking_payload(), headers=headers)
+    assert res.status_code == 201, res.text
+    data = res.json()
+    assert data["vehicleCount"] == 2
+    assert data["status"] == "confirmed"
+    assert data["total"] == 4750
+    assert len(data["vehicles"]) == 2
+
+    lst = await client.get(f"{BASE}/bookings", headers=headers)
+    assert lst.status_code == 200
+    bookings = lst.json()
+    assert len(bookings) == 1
+    assert bookings[0]["id"] == data["id"]
+
+
+async def test_create_booking_empty_vehicles_422(
+    db_session: AsyncSession, client: AsyncClient, test_user: User
+):
+    """FLEET12: Booking with zero vehicles is rejected."""
+    headers = await _auth_header(test_user)
+    await client.post(f"{BASE}/register", json=_body(contactEmail=test_user.email))
+    res = await client.post(
+        f"{BASE}/bookings", json=_booking_payload(vehicles=[]), headers=headers
+    )
+    assert res.status_code == 422

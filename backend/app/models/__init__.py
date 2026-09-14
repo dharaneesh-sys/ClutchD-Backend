@@ -1,6 +1,6 @@
 from app.models.audit_log import AuditLog
 from app.models.dispute import Dispute
-from app.models.fleet import Fleet
+from app.models.fleet import Fleet, FleetBooking
 from app.models.garage import Garage, GarageMechanic
 from app.models.job import Job
 from app.models.marketplace import (
@@ -47,6 +47,7 @@ __all__ = [
     "Dispute",
     "AuditLog",
     "Fleet",
+    "FleetBooking",
     "Vehicle",
     "Notification",
     "ReferralCode",
@@ -67,4 +68,5 @@ __all__ = [
     "MarketplaceOrderItem",
     "MarketplaceProductReview",
     "ChatMessage",
+    "FleetBooking",
 ]

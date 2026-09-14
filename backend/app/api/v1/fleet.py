@@ -1,14 +1,15 @@
 import logging
 import re
-from uuid import UUID
+from datetime import datetime
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.limiter import limiter
-from app.models.fleet import Fleet
+from app.models.fleet import Fleet, FleetBooking
 from app.models.user import User
 from app.schemas.fleet import FleetListResponse, FleetRegisterBody, FleetResponse
 
@@ -93,9 +94,106 @@ async def my_fleet(db: DbSession, user: CurrentUser):
     return {"fleets": [_to_response(f) for f in fleets], "total": len(fleets)}
 
 
+# ── Fleet bulk bookings ─────────────────────────────────────────────────
+
+
+class FleetBookingVehicleIn(BaseModel):
+    vehicleId: str | None = None
+    vehicleName: str = Field(..., max_length=255)
+    serviceType: str = Field(..., max_length=64)
+
+
+class FleetBookingCreate(BaseModel):
+    scheduledAt: datetime
+    vehicles: list[FleetBookingVehicleIn] = Field(..., min_length=1, max_length=100)
+    subtotal: float = Field(0, ge=0)
+    discountPercent: int = Field(0, ge=0, le=100)
+    total: float = Field(0, ge=0)
+
+
+class FleetBookingResponse(BaseModel):
+    id: UUID
+    fleetId: UUID
+    scheduledAt: datetime
+    vehicleCount: int
+    vehicles: list
+    subtotal: float
+    discountPercent: int
+    total: float
+    status: str
+    createdAt: datetime
+
+    class Config:
+        from_attributes = True
+
+
+def _booking_to_response(b: FleetBooking) -> dict:
+    return {
+        "id": b.id,
+        "fleetId": b.fleet_id,
+        "scheduledAt": b.scheduled_at,
+        "vehicleCount": b.vehicle_count,
+        "vehicles": b.vehicles or [],
+        "subtotal": b.subtotal,
+        "discountPercent": b.discount_percent,
+        "total": b.total,
+        "status": b.status,
+        "createdAt": b.created_at,
+    }
+
+
+async def _get_own_fleet(db, user: User) -> Fleet:
+    r = await db.execute(
+        select(Fleet).where(
+            (Fleet.user_id == user.id) | (Fleet.contact_email == user.email)
+        )
+    )
+    fleet = r.scalars().first()
+    if not fleet:
+        raise HTTPException(status_code=404, detail="No fleet registration found — register your fleet first")
+    return fleet
+
+
+@router.post("/bookings", response_model=FleetBookingResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
+async def create_fleet_booking(request: Request, body: FleetBookingCreate, db: DbSession, user: CurrentUser):
+    fleet = await _get_own_fleet(db, user)
+    booking = FleetBooking(
+        id=uuid4(),
+        fleet_id=fleet.id,
+        user_id=user.id,
+        scheduled_at=body.scheduledAt,
+        vehicle_count=len(body.vehicles),
+        vehicles=[v.model_dump() for v in body.vehicles],
+        subtotal=body.subtotal,
+        discount_percent=body.discountPercent,
+        total=body.total,
+        status="confirmed",
+    )
+    db.add(booking)
+    await db.flush()
+    await db.refresh(booking)
+    return _booking_to_response(booking)
+
+
+@router.get("/bookings", response_model=list[FleetBookingResponse])
+async def list_fleet_bookings(db: DbSession, user: CurrentUser):
+    fleet = await _get_own_fleet(db, user)
+    r = await db.execute(
+        select(FleetBooking)
+        .where(FleetBooking.fleet_id == fleet.id)
+        .order_by(FleetBooking.created_at.desc())
+    )
+    return [_booking_to_response(b) for b in r.scalars().all()]
+
+
 @router.get("/{fleet_id}", response_model=FleetResponse)
 async def get_fleet(fleet_id: UUID, db: DbSession, user: CurrentUser):
-    """Fetch one fleet registration — owner or admin only."""
+    """Fetch one fleet registration — owner or admin only.
+
+    NOTE: must be declared AFTER /bookings so "bookings" is not captured
+    as a fleet_id UUID path param.
+    """
     r = await db.execute(select(Fleet).where(Fleet.id == fleet_id))
     fleet = r.scalar_one_or_none()
     if not fleet:
