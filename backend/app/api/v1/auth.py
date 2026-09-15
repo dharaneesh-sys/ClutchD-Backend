@@ -266,9 +266,11 @@ async def oauth_google(request: Request, body: GoogleOAuthRequest, db: DbSession
             db.add(s)
             await db.flush()
     else:
-        # If user exists, don't silently change role.
-        if body.role and user.role != body.role:
-            raise HTTPException(status_code=409, detail="Account already exists with a different role")
+        # Existing account: log the user in (standard OAuth behavior). The
+        # app routes by the server's role anyway, so a customer tapping the
+        # mechanic tab then Google just lands in their customer dashboard.
+        if user.role != desired_role:
+            logger.info("Google sign-in for %s: account role=%s, requested=%s — logging into existing account", email, user.role, desired_role)
     token = create_access_token(str(user.id), {"role": user.role})
     refresh = create_refresh_token(str(user.id))
     payload = await user_to_frontend_dict(db, user)
