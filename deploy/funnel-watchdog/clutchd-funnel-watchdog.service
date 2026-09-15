@@ -1,0 +1,13 @@
+[Unit]
+Description=ClutchD funnel watchdog — probe public Tailscale funnel edge, restart tailscaled if stale
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/clutchd-funnel-watchdog.sh
+# The heal path restarts tailscaled, which owns this box's Tailscale SSH.
+# Run it in its own session so an SSH drop can't kill the watchdog mid-restart.
+KillMode=process
+TimeoutStartSec=300
+User=root
