@@ -11,6 +11,22 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# KYC gate for provider discovery (nearby search + offer dispatch). Read per
+# call — the flag is env-controlled and can be flipped without a deploy.
+def _verified_gate() -> str:
+    """SQL fragment for the verification filter: 'm.verified = true' or 'true'.
+    Determined by settings.require_verified_providers (default True)."""
+    if get_settings().require_verified_providers:
+        return "m.verified = true"
+    return "true"
+
+
+def _garage_verified_gate() -> str:
+    """Same gate for garage queries (column prefix g.)."""
+    if get_settings().require_verified_providers:
+        return "g.verified = true"
+    return "true"
+
 # When PostGIS is not available (Render managed PostgreSQL, etc.),
 # fall back to fetching all records and computing distances in Python.
 # Set the max we'll pull for in-memory sorting to avoid OOM.
@@ -162,11 +178,11 @@ async def _fallback_mechanics(
 ) -> list[RankedMechanic]:
     expertise = _resolve_expertise(issue_tag)
     if expertise:
-        q = text("""
+        q = text(f"""
             SELECT m.id, m.full_name, m.lat, m.lon, m.rating, m.expertise
             FROM mechanics m
             JOIN users u ON u.id = m.user_id
-            WHERE m.verified = true AND m.available = true
+            WHERE {_verified_gate()} AND m.available = true
               AND m.penalized = false
               AND u.is_active = true
               AND m.expertise && ARRAY[CAST(:tag AS VARCHAR)]
@@ -178,11 +194,11 @@ async def _fallback_mechanics(
             result = await db.execute(q, params)
             rows = result.mappings().all()
         except Exception:
-            q_all = text("""
+            q_all = text(f"""
                 SELECT m.id, m.full_name, m.lat, m.lon, m.rating, m.expertise
                 FROM mechanics m
                 JOIN users u ON u.id = m.user_id
-                WHERE m.verified = true AND m.available = true
+                WHERE {_verified_gate()} AND m.available = true
                   AND m.penalized = false
                   AND u.is_active = true
                 ORDER BY u.created_at ASC, u.id ASC
@@ -202,11 +218,11 @@ async def _fallback_mechanics(
                 if expertise in (exp or []):
                     rows.append(r)
     else:
-        q = text("""
+        q = text(f"""
             SELECT m.id, m.full_name, m.lat, m.lon, m.rating, m.expertise
             FROM mechanics m
             JOIN users u ON u.id = m.user_id
-            WHERE m.verified = true AND m.available = true
+            WHERE {_verified_gate()} AND m.available = true
               AND m.penalized = false
               AND u.is_active = true
             ORDER BY u.created_at ASC, u.id ASC
@@ -247,11 +263,11 @@ async def _fallback_garages(
 ) -> list[RankedGarage]:
     expertise = _resolve_expertise(issue_tag)
     if expertise:
-        q = text("""
+        q = text(f"""
             SELECT g.id, g.garage_name, g.lat, g.lon, g.rating, g.services
             FROM garages g
             JOIN users u ON u.id = g.user_id
-            WHERE g.verified = true
+            WHERE {_garage_verified_gate()}
               AND g.penalized = false
               AND u.is_active = true
               AND g.services && ARRAY[CAST(:tag AS VARCHAR)]
@@ -263,11 +279,11 @@ async def _fallback_garages(
             result = await db.execute(q, params)
             rows = result.mappings().all()
         except Exception:
-            q_all = text("""
+            q_all = text(f"""
                 SELECT g.id, g.garage_name, g.lat, g.lon, g.rating, g.services
                 FROM garages g
                 JOIN users u ON u.id = g.user_id
-                WHERE g.verified = true
+                WHERE {_garage_verified_gate()}
                   AND g.penalized = false
                   AND u.is_active = true
                 ORDER BY u.created_at ASC, u.id ASC
@@ -287,11 +303,11 @@ async def _fallback_garages(
                 if expertise in (svc or []):
                     rows.append(r)
     else:
-        q = text("""
+        q = text(f"""
             SELECT g.id, g.garage_name, g.lat, g.lon, g.rating, g.services
             FROM garages g
             JOIN users u ON u.id = g.user_id
-            WHERE g.verified = true
+            WHERE {_garage_verified_gate()}
               AND g.penalized = false
               AND u.is_active = true
             ORDER BY u.created_at ASC, u.id ASC
@@ -330,7 +346,7 @@ async def nearest_mechanics(
     limit: int = 20,
     issue_tag: str | None = None,
 ) -> list[RankedMechanic]:
-    sql_issue = """
+    sql_issue = f"""
         SELECT m.id, m.full_name, m.lat, m.lon, m.rating, m.expertise,
           ST_Distance(
             geography(ST_SetSRID(ST_MakePoint(m.lon, m.lat), 4326)),
@@ -338,7 +354,7 @@ async def nearest_mechanics(
           ) AS dist_m
         FROM mechanics m
         JOIN users u ON u.id = m.user_id
-        WHERE m.verified = true AND m.available = true
+        WHERE {_verified_gate()} AND m.available = true
           AND m.penalized = false
           AND u.is_active = true
           AND m.expertise && ARRAY[CAST(:tag AS VARCHAR)]
@@ -350,7 +366,7 @@ async def nearest_mechanics(
         ORDER BY dist_m ASC
         LIMIT :limit
     """
-    sql_all = """
+    sql_all = f"""
         SELECT m.id, m.full_name, m.lat, m.lon, m.rating, m.expertise,
           ST_Distance(
             geography(ST_SetSRID(ST_MakePoint(m.lon, m.lat), 4326)),
@@ -358,7 +374,7 @@ async def nearest_mechanics(
           ) AS dist_m
         FROM mechanics m
         JOIN users u ON u.id = m.user_id
-        WHERE m.verified = true AND m.available = true
+        WHERE {_verified_gate()} AND m.available = true
           AND m.penalized = false
           AND u.is_active = true
           AND ST_DWithin(
@@ -407,7 +423,7 @@ async def nearest_garages(
     limit: int = 20,
     issue_tag: str | None = None,
 ) -> list[RankedGarage]:
-    sql_issue = """
+    sql_issue = f"""
         SELECT g.id, g.garage_name, g.lat, g.lon, g.rating, g.services,
           ST_Distance(
             geography(ST_SetSRID(ST_MakePoint(g.lon, g.lat), 4326)),
@@ -415,7 +431,7 @@ async def nearest_garages(
           ) AS dist_m
         FROM garages g
         JOIN users u ON u.id = g.user_id
-        WHERE g.verified = true
+        WHERE {_garage_verified_gate()}
           AND g.penalized = false
           AND u.is_active = true
           AND g.services && ARRAY[CAST(:tag AS VARCHAR)]
@@ -427,7 +443,7 @@ async def nearest_garages(
         ORDER BY dist_m ASC
         LIMIT :limit
     """
-    sql_all = """
+    sql_all = f"""
         SELECT g.id, g.garage_name, g.lat, g.lon, g.rating, g.services,
           ST_Distance(
             geography(ST_SetSRID(ST_MakePoint(g.lon, g.lat), 4326)),
@@ -435,7 +451,7 @@ async def nearest_garages(
           ) AS dist_m
         FROM garages g
         JOIN users u ON u.id = g.user_id
-        WHERE g.verified = true
+        WHERE {_garage_verified_gate()}
           AND g.penalized = false
           AND u.is_active = true
           AND ST_DWithin(

@@ -65,6 +65,11 @@ class Settings(BaseSettings):
 
     # When true, new mechanics/garages are verified immediately (local demos only).
     dev_auto_verify_providers: bool = False
+    # Provider-discovery KYC gate. When False (launch mode for small markets),
+    # the nearby search and job-offer dispatch also include providers whose
+    # verification is still pending. Availability/penalty/active filters are
+    # unaffected. Flip back to True once KYC volume justifies the gate.
+    require_verified_providers: bool = True
 
     # Platform UPI ID for receiving platform fees. Set via env var PLATFORM_UPI_ID.
     platform_upi_id: str = "amdevanand206@oksbi"
