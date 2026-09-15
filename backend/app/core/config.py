@@ -46,6 +46,12 @@ class Settings(BaseSettings):
 
     google_oauth_client_id: str | None = None
     google_oauth_client_secret: str | None = None
+    # Extra Google client IDs allowed as token audience — comma-separated.
+    # The Android APK's native Google sign-in mints idTokens with the
+    # Firebase/Android client's audience, which differs from the web client
+    # above; both must be trusted or native sign-in 401s with
+    # "Token audience mismatch".
+    google_oauth_extra_client_ids: str = ""
 
     stripe_secret_key: str | None = None
     stripe_webhook_secret: str | None = None

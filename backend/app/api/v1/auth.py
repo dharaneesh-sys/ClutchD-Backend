@@ -203,7 +203,13 @@ async def oauth_google(request: Request, body: GoogleOAuthRequest, db: DbSession
         raise HTTPException(status_code=504, detail="Google token verification timed out")
     except httpx.ConnectError:
         raise HTTPException(status_code=502, detail="Cannot reach Google authentication service")
-    if settings.google_oauth_client_id and data.get("aud") != settings.google_oauth_client_id:
+    trusted_auds = {
+        cid.strip() for cid in (
+            [settings.google_oauth_client_id or ""] + (settings.google_oauth_extra_client_ids or "").split(",")
+        ) if cid.strip()
+    }
+    if trusted_auds and data.get("aud") not in trusted_auds:
+        logger.warning("OAuth token audience %s not in trusted set (%d ids)", str(data.get("aud"))[:20], len(trusted_auds))
         raise HTTPException(status_code=401, detail="Token audience mismatch")
     email = data.get("email")
     if not email:

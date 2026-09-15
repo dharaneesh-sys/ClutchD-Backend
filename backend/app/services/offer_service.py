@@ -65,12 +65,24 @@ async def create_provider_offers(db: AsyncSession, job: Job) -> int:
     expertise = matching.issue_tag_to_expertise(raw_tag)  # ISSUE_TO_EXPERTISE mapping
     issue_tag = expertise  # None means unfiltered; string means filtered by expertise
 
+    # Matched-first fanout: offers go to expertise-matching providers, then to
+    # the nearest others regardless of skills (deduped), so a job always
+    # reaches several nearby providers even when nobody lists the exact
+    # expertise. With a tiny provider pool, strict-only filtering starves
+    # most mechanics of work entirely.
     mechs = await matching.nearest_mechanics(
         db, lat, lon, limit=10, issue_tag=issue_tag
     )
     gars = await matching.nearest_garages(
         db, lat, lon, limit=10, issue_tag=issue_tag
     )
+    if issue_tag is not None:
+        extra_mechs = await matching.nearest_mechanics(db, lat, lon, limit=5, issue_tag=None)
+        seen_m = {m.id for m in mechs}
+        mechs = mechs + [m for m in extra_mechs if m.id not in seen_m]
+        extra_gars = await matching.nearest_garages(db, lat, lon, limit=5, issue_tag=None)
+        seen_g = {g.id for g in gars}
+        gars = gars + [g for g in extra_gars if g.id not in seen_g]
 
     # 3. Determine which provider types to create offers for
     create_mechanics = locked_job.request_type in ("mechanic", "auto")
