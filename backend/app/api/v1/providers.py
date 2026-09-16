@@ -62,8 +62,11 @@ async def update_provider_location(
             raise HTTPException(status_code=404, detail="Mechanic profile not found")
         mech.lat = body.latitude
         mech.lon = body.longitude
+        # Capture before flush — post-flush attribute access on an updated row
+        # can trigger a lazy refresh (MissingGreenlet) inside the async session.
+        lat, lon = mech.lat, mech.lon
         await db.flush()
-        return {"ok": True, "role": "mechanic", "latitude": mech.lat, "longitude": mech.lon}
+        return {"ok": True, "role": "mechanic", "latitude": lat, "longitude": lon}
 
     if user.role == UserRole.garage.value:
         r = await db.execute(select(Garage).where(Garage.user_id == user.id))
@@ -72,8 +75,9 @@ async def update_provider_location(
             raise HTTPException(status_code=404, detail="Garage profile not found")
         garage.lat = body.latitude
         garage.lon = body.longitude
+        lat, lon = garage.lat, garage.lon
         await db.flush()
-        return {"ok": True, "role": "garage", "latitude": garage.lat, "longitude": garage.lon}
+        return {"ok": True, "role": "garage", "latitude": lat, "longitude": lon}
 
     raise HTTPException(status_code=403, detail="Only mechanics and garages can check in a provider location")
 
