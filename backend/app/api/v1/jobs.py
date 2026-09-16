@@ -117,7 +117,7 @@ async def incoming_jobs(db: DbSession, user: CurrentUser):
             select(Job)
             .where(
                 Job.assigned_mechanic_id == mech.id,
-                Job.status.in_(("assigned", "en_route", "in_progress")),
+                Job.status.in_(("assigned", "en_route", "in_progress", "payment_pending")),
             )
             .order_by(Job.created_at.desc())
         )
@@ -130,7 +130,7 @@ async def incoming_jobs(db: DbSession, user: CurrentUser):
             select(Job)
             .where(
                 Job.assigned_garage_id == garage.id,
-                Job.status.in_(("assigned", "en_route", "in_progress")),
+                Job.status.in_(("assigned", "en_route", "in_progress", "payment_pending")),
             )
             .order_by(Job.created_at.desc())
         )
@@ -139,7 +139,7 @@ async def incoming_jobs(db: DbSession, user: CurrentUser):
             select(Job)
             .where(
                 Job.user_id == user.id,
-                Job.status.in_(("searching", "assigned", "en_route", "in_progress")),
+                Job.status.in_(("searching", "assigned", "en_route", "in_progress", "payment_pending")),
             )
             .order_by(Job.created_at.desc())
         )
