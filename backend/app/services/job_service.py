@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -17,7 +17,7 @@ from app.ws.manager import push_location_update, push_status_update
 # ---- Status transition guard ------------------------------------------------
 VALID_TRANSITIONS: dict[str, set[str]] = {
     "searching": {"assigned", "cancelled"},
-    "assigned": {"en_route", "cancelled"},
+    "assigned": {"en_route", "payment_pending", "cancelled"},
     "en_route": {"in_progress", "completed", "cancelled"},
     "in_progress": {"payment_pending", "completed", "cancelled"},
     "payment_pending": {"completed", "cancelled"},
@@ -367,7 +367,7 @@ async def finalize_job_price(
     """
     from datetime import datetime, timezone
 
-    if job.status not in ("in_progress", "en_route"):
+    if job.status not in ("assigned", "in_progress", "en_route"):
         raise InvalidTransitionError(job.status, "payment_pending")
 
     # ---- Distance calculation -----------------------------------------
@@ -486,5 +486,19 @@ async def cancel_job(db: AsyncSession, job: Job) -> None:
 
 async def delete_job(db: AsyncSession, job: Job) -> None:
     """Delete a job and its associated relationships."""
+    # Delete child rows explicitly. The Job model's relationships have no
+    # ORM cascade, so SQLAlchemy's default on parent delete is to NULL out
+    # the children's job_id — which violates NOT NULL on provider_offers and
+    # chat_messages (500). The DB-level ondelete=CASCADE never fires because
+    # the ORM issues UPDATEs before the DELETE.
+    from app.models.chat import ChatMessage
+    from app.models.dispute import Dispute
+    from app.models.notification import Notification
+    from app.models.payment import Payment
+    from app.models.provider_offer import ProviderOffer
+    from app.models.review import Review
+
+    for model in (ChatMessage, Dispute, Notification, Payment, Review, ProviderOffer):
+        await db.execute(delete(model).where(model.job_id == job.id))
     await db.delete(job)
     await db.flush()
