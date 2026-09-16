@@ -35,6 +35,49 @@ async def nearby_providers(
     }
 
 
+# ── Location Check-in ─────────────────────────────────
+class LocationUpdateBody(BaseModel):
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+
+
+@router.put("/location")
+@limiter.limit("30/minute")
+async def update_provider_location(
+    request: Request,
+    body: LocationUpdateBody,
+    db: DbSession,
+    user: CurrentUser,
+):
+    """Providers check in their current GPS position here on every login.
+
+    The nearby search (GET /providers/nearby) ranks by these stored
+    coordinates, so customers discover providers at their real current
+    location — not wherever they signed up from.
+    """
+    if user.role == UserRole.mechanic.value:
+        r = await db.execute(select(Mechanic).where(Mechanic.user_id == user.id))
+        mech = r.scalar_one_or_none()
+        if not mech:
+            raise HTTPException(status_code=404, detail="Mechanic profile not found")
+        mech.lat = body.latitude
+        mech.lon = body.longitude
+        await db.flush()
+        return {"ok": True, "role": "mechanic", "latitude": mech.lat, "longitude": mech.lon}
+
+    if user.role == UserRole.garage.value:
+        r = await db.execute(select(Garage).where(Garage.user_id == user.id))
+        garage = r.scalar_one_or_none()
+        if not garage:
+            raise HTTPException(status_code=404, detail="Garage profile not found")
+        garage.lat = body.latitude
+        garage.lon = body.longitude
+        await db.flush()
+        return {"ok": True, "role": "garage", "latitude": garage.lat, "longitude": garage.lon}
+
+    raise HTTPException(status_code=403, detail="Only mechanics and garages can check in a provider location")
+
+
 # ── Profile Update ────────────────────────────────────
 class ProfileUpdateBody(BaseModel):
     fullName: str | None = Field(None, max_length=100)
