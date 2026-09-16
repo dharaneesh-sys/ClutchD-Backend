@@ -330,7 +330,12 @@ class CashPaymentRequest(BaseModel):
 
 @router.post("/cash")
 async def cash_payment(body: CashPaymentRequest, db: DbSession, user: CurrentUser):
-    """Mark a job as paid via cash. Only the assigned mechanic can do this."""
+    """Mark a job as paid via cash.
+
+    Allowed callers: the assigned mechanic, the assigned garage, the job's
+    own customer (confirming they handed over the cash — the primary flow
+    while digital payments are optional), or an admin.
+    """
     if body.amount < 100 or body.amount > 50000000:
         raise HTTPException(status_code=422, detail="Invalid amount")
 
@@ -338,6 +343,10 @@ async def cash_payment(body: CashPaymentRequest, db: DbSession, user: CurrentUse
     job = jr.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    # A closed job can't take a new payment.
+    if job.status in ("completed", "cancelled"):
+        raise HTTPException(status_code=409, detail="Job is already closed")
 
     # Prevent double-collect: check if payment already exists for this job
     existing = await db.execute(
@@ -349,14 +358,25 @@ async def cash_payment(body: CashPaymentRequest, db: DbSession, user: CurrentUse
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Payment already exists for this job")
 
-    # Verify user is the assigned mechanic or admin
-    from app.models.mechanic import Mechanic
+    # Authorization: assigned mechanic, assigned garage, the job's customer,
+    # or an admin.
+    is_admin = user.role == UserRole.admin.value or user.is_superuser
+    is_customer = job.user_id == user.id
+    is_assigned_mechanic = False
+    is_assigned_garage = False
+
     if user.role == UserRole.mechanic.value:
+        from app.models.mechanic import Mechanic
         mr = await db.execute(select(Mechanic).where(Mechanic.user_id == user.id))
         mech = mr.scalar_one_or_none()
-        if not mech or job.assigned_mechanic_id != mech.id:
-            raise HTTPException(status_code=403, detail="Not assigned to this job")
-    elif user.role != UserRole.admin.value:
+        is_assigned_mechanic = bool(mech and job.assigned_mechanic_id == mech.id)
+    elif user.role == UserRole.garage.value:
+        from app.models.garage import Garage
+        gr = await db.execute(select(Garage).where(Garage.user_id == user.id))
+        gar = gr.scalar_one_or_none()
+        is_assigned_garage = bool(gar and job.assigned_garage_id == gar.id)
+
+    if not (is_admin or is_customer or is_assigned_mechanic or is_assigned_garage):
         raise HTTPException(status_code=403, detail="Not authorized")
 
     pmt = Payment(
@@ -371,6 +391,25 @@ async def cash_payment(body: CashPaymentRequest, db: DbSession, user: CurrentUse
     db.add(pmt)
     job.status = "completed"
     await db.flush()
+
+    # Live update: customer's tracker moves to Completed, provider's queue
+    # clears. WS push + persistent notification, mirroring patch_job_status.
+    from app.services.job_service import job_response_dict, push_status_update
+    summary = job_response_dict(job)
+    await push_status_update(str(job.user_id), str(job.id), "completed", summary.get("mechanic"))
+    provider_user_id = None
+    if job.assigned_mechanic_id:
+        from app.models.mechanic import Mechanic
+        pr = await db.execute(select(Mechanic).where(Mechanic.id == job.assigned_mechanic_id))
+        prov = pr.scalar_one_or_none()
+        provider_user_id = str(prov.user_id) if prov else None
+    elif job.assigned_garage_id:
+        from app.models.garage import Garage
+        pr = await db.execute(select(Garage).where(Garage.id == job.assigned_garage_id))
+        prov = pr.scalar_one_or_none()
+        provider_user_id = str(prov.user_id) if prov else None
+    if provider_user_id:
+        await push_status_update(provider_user_id, str(job.id), "completed", None)
 
     return {"ok": True, "payment_id": str(pmt.id)}
 
