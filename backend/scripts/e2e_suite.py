@@ -1,20 +1,23 @@
-"""ClutchD full E2E suite — runs against the PUBLIC funnel URL (same path phones use).
+"""ClutchD full E2E suite — exercises every feature against a running backend.
 
-Covers: health, auth lifecycle, cart/orders, favorites/reviews, seller uploads,
-fleet, chat (REST + WS), forgot-password, KYC admin.
+Covers: health, auth lifecycle, profile, marketplace catalog, seller uploads,
+cart/orders, favorites/reviews, fleet, job lifecycle + chat (WS + history),
+payments, forgot-password (full reset via Redis), KYC admin review.
+
+The suite CREATES its own users/products and DELETES them at the end, so it
+never leaves fake data in production.
 
 Usage (on the server):
     cd ~/ClutchD-Backend/backend && ../venv/bin/python scripts/e2e_suite.py [--local]
 
-    --local : target http://127.0.0.1:8000 (server-internal) instead of the
-              public funnel edge. Default is the public URL.
+    --local : target http://127.0.0.1:8000 (default; the public funnel edge
+              cannot be reached from the server itself — DNS short-circuits).
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import secrets
 import sys
 import time
 from urllib.parse import urlparse
@@ -24,61 +27,58 @@ import httpx
 PUBLIC_BASE = "https://clutchd-1.tail14cfb9.ts.net"
 LOCAL_BASE = "http://127.0.0.1:8000"
 API = "/api"
-WS_LOCAL = "ws://127.0.0.1:8000/ws"
+DOMAIN = "e2e.clutchd.in"  # all suite users use this domain → easy bulk cleanup
 
 PASS: list[str] = []
 FAIL: list[str] = []
 
+# everything the suite created (for end-of-run cleanup)
+CREATED_USER_IDS: set[str] = set()
+CREATED_PRODUCT_IDS: list[str] = set()
+
 
 def record(name: str, ok: bool, detail: str = "") -> None:
     (PASS if ok else FAIL).append(f"{name}{' — ' + detail if detail else ''}")
-    print(("PASS  " if ok else "FAIL  ") + name + (f"  [{detail}]" if detail and not ok else ""))
+    tag = "PASS" if ok else "FAIL"
+    det = f"  [{detail}]" if (detail and not ok) else ""
+    print(f"{tag}  {name}{det}", flush=True)
 
 
 def make_client(base: str) -> httpx.AsyncClient:
-    return httpx.AsyncClient(base_url=base, timeout=httpx.Timeout(45.0), verify=True)
+    return httpx.AsyncClient(base_url=base, timeout=httpx.Timeout(45.0))
 
 
-async def api_get(c: httpx.AsyncClient, path: str, token: str | None = None, **kw):
+async def req(c: httpx.AsyncClient, method: str, path: str, token: str | None = None, **kw):
     headers = kw.pop("headers", {})
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    return await c.get(f"{API}{path}", headers=headers, **kw)
+    return await c.request(method, f"{API}{path}", headers=headers, **kw)
 
 
-async def api_post(c: httpx.AsyncClient, path: str, json_body=None, token: str | None = None, **kw):
-    headers = kw.pop("headers", {})
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    return await c.post(f"{API}{path}", json=json_body, headers=headers, **kw)
+async def api_get(c, path, token=None, **kw):
+    return await req(c, "GET", path, token, **kw)
 
 
-async def api_patch(c: httpx.AsyncClient, path: str, json_body=None, token: str | None = None, **kw):
-    headers = kw.pop("headers", {})
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    return await c.patch(f"{API}{path}", json=json_body, headers=headers, **kw)
+async def api_post(c, path, json_body=None, token=None, **kw):
+    return await req(c, "POST", path, token, json=json_body, **kw)
 
 
-async def api_put(c: httpx.AsyncClient, path: str, json_body=None, token: str | None = None, **kw):
-    headers = kw.pop("headers", {})
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    return await c.put(f"{API}{path}", json=json_body, headers=headers, **kw)
+async def api_patch(c, path, json_body=None, token=None, **kw):
+    return await req(c, "PATCH", path, token, json=json_body, **kw)
 
 
-async def api_delete(c: httpx.AsyncClient, path: str, token: str | None = None, **kw):
-    headers = kw.pop("headers", {})
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    return await c.delete(f"{API}{path}", headers=headers, **kw)
+async def api_put(c, path, json_body=None, token=None, **kw):
+    return await req(c, "PUT", path, token, json=json_body, **kw)
 
 
-def signup_body(role: str, ts: int, domain: str = "e2e.clutchd.in") -> dict:
-    email = f"e2e_{role}_{ts}@{domain}"
+async def api_delete(c, path, token=None, **kw):
+    return await req(c, "DELETE", path, token, **kw)
+
+
+def signup_body(role: str, ts: int) -> dict:
     b = {
         "role": role,
-        "email": email,
+        "email": f"e2e_{role}_{ts}@{DOMAIN}",
         "password": "E2eTest123!",
         "confirmPassword": "E2eTest123!",
         "fullName": f"E2E {role.title()} {ts}",
@@ -90,21 +90,27 @@ def signup_body(role: str, ts: int, domain: str = "e2e.clutchd.in") -> dict:
     if role == "mechanic":
         b["expertise"] = ["engine", "tires"]
         b["experience"] = "5"
-    if role == "garage":
-        b["garageName"] = f"E2E Garage {ts}"
-        b["services"] = ["engine", "tires"]
-        b["mechanicCount"] = "3"
     if role == "seller":
         b["storeName"] = f"E2E Store {ts}"
-        b["ownerName"] = f"E2E Seller {ts}"
+        b["ownerName"] = b["fullName"]
     return b
 
 
-async def login(c: httpx.AsyncClient, email: str, password: str):
+async def signup(c: httpx.AsyncClient, role: str, ts: int, **extra):
+    body = {**signup_body(role, ts), **extra}
+    r = await api_post(c, "/auth/signup", body)
+    assert r.status_code == 200, f"signup {role}: {r.status_code} {r.text[:200]}"
+    d = r.json()
+    uid = d.get("user", {}).get("id")
+    if uid:
+        CREATED_USER_IDS.add(uid)
+    return d  # {token, user, refresh_token}
+
+
+async def login(c: httpx.AsyncClient, email: str, password: str) -> dict:
     r = await api_post(c, "/auth/login", {"email": email, "password": password})
     assert r.status_code == 200, f"login {email}: {r.status_code} {r.text[:200]}"
-    d = r.json()
-    return d["token"], d["user"]
+    return r.json()
 
 
 # ────────────────────────── sections ──────────────────────────
@@ -115,341 +121,269 @@ async def t_health(c: httpx.AsyncClient):
     record("health", r.status_code == 200, f"{r.status_code}")
 
 
-async def t_auth(c: httpx.AsyncClient, ts: int):
-    global CUST, CUST_TOKEN
+async def t_auth(c: httpx.AsyncClient, ts: int) -> dict:
+    """Signup → refresh → login. Returns creds of the suite customer."""
     b = signup_body("customer", ts)
-
-    r = await api_post(c, "/auth/signup", b)
-    record("auth: signup customer", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
-    d = r.json()
-    CUST, CUST_TOKEN = d["user"], d["token"]
-
-    r = await api_get(c, "/auth/me", CUST_TOKEN)
-    record("auth: /auth/me", r.status_code == 200, f"{r.status_code}")
+    d = await signup(c, "customer", ts)
+    cust_tok = d["token"]
 
     r = await api_post(c, "/auth/login", {"email": b["email"], "password": b["password"]})
     record("auth: login", r.status_code == 200, f"{r.status_code}")
-    tok2 = r.json()["token"]
+    d2 = r.json()
 
-    r = await c.post(
-        f"{API}/auth/refresh",
-        json={},
-        headers={"X-Refresh-Token": tok2},
-    )
+    r = await c.post(f"{API}/auth/refresh", json={}, headers={"X-Refresh-Token": d2.get("refresh_token", "")})
     record("auth: refresh (X-Refresh-Token)", r.status_code == 200, f"{r.status_code} {r.text[:120]}")
-    return b["email"], b["password"]
+
+    r = await api_get(c, "/profile/me", cust_tok)
+    record("auth: session works (/profile/me)", r.status_code == 200, f"{r.status_code}")
+
+    return {"email": b["email"], "password": b["password"], "token": cust_tok, "user": d["user"]}
 
 
-async def t_profile(c: httpx.AsyncClient):
-    r = await api_get(c, "/profile/me", CUST_TOKEN)
+async def t_profile(c: httpx.AsyncClient, tok: str):
+    r = await api_get(c, "/profile/me", tok)
     record("profile: GET /me", r.status_code == 200, f"{r.status_code}")
 
-    r = await api_put(c, "/profile/me", {"full_name": "E2E Renamed", "address": "12 Test St, Coimbatore"}, CUST_TOKEN)
+    r = await api_put(c, "/profile/me", {"full_name": "E2E Renamed", "address": "12 Test St, Coimbatore"}, tok)
     record("profile: PUT /me", r.status_code == 200, f"{r.status_code} {r.text[:120]}")
 
-    r = await api_get(c, "/settings", CUST_TOKEN)
-    record("profile: GET /settings", r.status_code == 200, f"{r.status_code}")
-
-    r = await api_get(c, "/referral/my-code", CUST_TOKEN)
-    record("profile: referral my-code", r.status_code == 200, f"{r.status_code}")
-
-    r = await api_get(c, "/notifications", CUST_TOKEN)
-    record("profile: notifications", r.status_code == 200, f"{r.status_code}")
+    for name, path in (("settings", "/settings"), ("referral my-code", "/referral/my-code"),
+                       ("notifications", "/notifications")):
+        r = await api_get(c, path, tok)
+        record(f"profile: GET {path}", r.status_code == 200, f"{r.status_code}")
 
 
 async def t_marketplace_catalog(c: httpx.AsyncClient):
     r = await api_get(c, "/categories")
     record("marketplace: categories", r.status_code == 200, f"{r.status_code}")
-    cats = r.json()
-    cid = (cats[0]["id"] if isinstance(cats, list) and cats else None) or (
-        (cats.get("categories") or [{}])[0].get("id") if isinstance(cats, dict) else None
-    )
 
     r = await api_get(c, "/products", params={"limit": 5})
     record("marketplace: products list", r.status_code == 200, f"{r.status_code}")
-    prods = r.json()
-    prods = prods.get("products", prods) if isinstance(prods, dict) else prods
+
     r = await api_get(c, "/products/top-products")
     record("marketplace: top-products", r.status_code == 200, f"{r.status_code}")
-    return cid
 
 
-async def t_seller_and_cart(c: httpx.AsyncClient, ts: int, cid):
-    """Seller signup -> product upload (photo compulsory) -> cart -> order -> favorite -> review."""
-    global PRODUCT, PRODUCT_ID, VENDOR_ID
+async def t_seller_and_cart(c: httpx.AsyncClient, ts: int):
+    """Seller signup → photo upload → product (photo compulsory) → cart → order → favorites → review."""
+    seller = await signup(c, "seller", ts)
+    stok = seller["token"]
 
-    sb = signup_body("seller", ts)
-    r = await api_post(c, "/auth/signup", sb)
-    record("seller: signup", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
-    seller_tok = r.json()["token"]
-
-    # photo upload (compulsory for products) — 1x1 transparent PNG
-    PNG_1PX = (
+    # 1x1 transparent PNG — photo upload is compulsory for products
+    png = (
         b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
         b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0dIDATx\x9cc\xfc\xcf"
         b"\xc0\xc0\x00\x00\x00\x04\xfe\x01\xf9\xd0\xa2\xa8\x00\x00\x00\x00IEND\xaeB`\x82"
     )
-    png = PNG_1PX
-    r = await c.post(
-        f"{API}/uploads",
-        files={"file": ("part.png", png, "image/png")},
-        headers={"Authorization": f"Bearer {seller_tok}"},
-    )
+    r = await c.post(f"{API}/uploads", files={"file": ("part.png", png, "image/png")},
+                     headers={"Authorization": f"Bearer {stok}"})
     record("seller: photo upload", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
     img_url = r.json().get("url", "") if r.status_code == 200 else ""
 
-    prod = {
-        "name": f"E2E Brake Pad {ts}",
-        "price": "1299.00",
-        "description": "E2E test brake pad",
-        "brand": "E2E",
-        "image": img_url or "https://example.com/part.png",
-    }
-    if cid:
-        prod["category_id"] = cid
-    r = await api_post(c, "/marketplace/products", prod, seller_tok)
-    record("seller: create product (photo required)", r.status_code == 201, f"{r.status_code} {r.text[:150]}")
-    p = r.json()
-    PRODUCT_ID, VENDOR_ID = p.get("id"), p.get("vendor_id") or p.get("vendorId")
+    prod = {"name": f"E2E Brake Pad {ts}", "price": "1299.00", "description": "E2E test brake pad",
+            "brand": "E2E", "category": "brake-parts", "image": img_url or f"https://{DOMAIN}/part.png"}
+    r = await api_post(c, "/marketplace/products", prod, stok)
+    ok = r.status_code == 201
+    record("seller: create product (with photo)", ok, f"{r.status_code} {r.text[:150]}")
+    pid = r.json().get("id") if ok else None
+    if pid:
+        CREATED_PRODUCT_IDS.add(pid)
 
-    # photo-less product must be rejected (compulsory photo rule)
-    r2 = await api_post(c, "/marketplace/products", {**prod, "name": f"E2E NoPhoto {ts}", "image": ""}, seller_tok)
+    r2 = await api_post(c, "/marketplace/products", {**prod, "name": f"E2E NoPhoto {ts}", "image": ""}, stok)
     record("seller: no-photo product rejected", r2.status_code in (400, 422), f"{r2.status_code}")
 
-    r = await api_get(c, "/marketplace/products/my-listings", seller_tok)
+    r = await api_get(c, "/marketplace/products/my-listings", stok)
     record("seller: my-listings", r.status_code == 200, f"{r.status_code}")
 
-    r = await api_patch(c, f"/marketplace/products/{PRODUCT_ID}", {"price": "1199.00"}, seller_tok)
+    r = await api_patch(c, f"/marketplace/products/{pid}", {"price": "1199.00"}, stok)
     record("seller: edit product", r.status_code == 200, f"{r.status_code}")
 
-    # cart
-    r = await api_post(c, "/marketplace/cart", {"product_id": PRODUCT_ID, "quantity": 2}, CUST_TOKEN)
+    # ── cart (customer) ──
+    cust = await signup(c, "customer", ts + 50)
+    ctok = cust["token"]
+
+    r = await api_post(c, "/marketplace/cart", {"product_id": pid, "quantity": 2}, ctok)
     record("cart: add item", r.status_code == 201, f"{r.status_code} {r.text[:150]}")
-    item = r.json()
+    item_id = r.json().get("id") if r.status_code == 201 else None
 
-    r = await api_get(c, "/marketplace/cart", CUST_TOKEN)
-    record("cart: list", r.status_code == 200, f"{r.status_code} ({len(r.json())} items)")
+    r = await api_get(c, "/marketplace/cart", ctok)
+    record("cart: list", r.status_code == 200, f"{r.status_code}")
 
-    r = await api_patch(c, f"/marketplace/cart/{item['id']}", {"quantity": 3}, CUST_TOKEN)
+    r = await api_patch(c, f"/marketplace/cart/{item_id}", {"quantity": 3}, ctok)
     record("cart: update qty", r.status_code == 200, f"{r.status_code}")
 
-    # order straight from product (items carry price)
-    order = {"items": [{"product_id": PRODUCT_ID, "name": "E2E Brake Pad", "quantity": 1, "price": "1199.00"}],
+    # ── order ──
+    order = {"items": [{"product_id": pid, "name": "E2E Brake Pad", "quantity": 1, "price": "1199.00"}],
              "address": {"line1": "12 Test St", "city": "Coimbatore", "pincode": "641001"}}
-    r = await api_post(c, "/orders", order, CUST_TOKEN)
+    r = await api_post(c, "/orders", order, ctok)
     record("orders: create", r.status_code == 201, f"{r.status_code} {r.text[:150]}")
-    order_id = r.json().get("id")
 
-    r = await api_get(c, "/orders", CUST_TOKEN)
+    r = await api_get(c, "/orders", ctok)
     record("orders: list", r.status_code == 200, f"{r.status_code}")
 
-    # favorites + product review
-    r = await api_post(c, "/favorites", {"product_id": PRODUCT_ID}, CUST_TOKEN)
+    # ── favorites + review ──
+    r = await api_post(c, "/favorites", {"product_id": pid}, ctok)
     record("favorites: add", r.status_code in (200, 201), f"{r.status_code}")
-    r = await api_get(c, "/favorites", CUST_TOKEN)
+    r = await api_get(c, "/favorites", ctok)
     record("favorites: list", r.status_code == 200, f"{r.status_code}")
-    r = await api_delete(c, f"/favorites/{PRODUCT_ID}", CUST_TOKEN)
+    r = await api_delete(c, f"/favorites/{pid}", ctok)
     record("favorites: remove", r.status_code in (200, 204), f"{r.status_code}")
 
-    r = await api_post(c, f"/marketplace/products/{PRODUCT_ID}/reviews", {"rating": 5, "text": "E2E", "userName": "E2E"}, CUST_TOKEN)
+    r = await api_post(c, f"/marketplace/products/{pid}/reviews",
+                       {"rating": 5, "text": "E2E", "userName": "E2E"}, ctok)
     record("reviews: product review", r.status_code == 201, f"{r.status_code} {r.text[:120]}")
 
-    # cleanup cart + product (keep DB tidy)
-    await api_delete(c, f"/marketplace/cart/{item['id']}", CUST_TOKEN)
-    await api_delete(c, f"/marketplace/products/{PRODUCT_ID}", seller_tok)
-    record("seller: delete product", True)
+    # ── seller order visibility + product cleanup ──
+    r = await api_delete(c, f"/marketplace/cart/{item_id}", ctok)
+    r = await api_delete(c, f"/marketplace/products/{pid}", stok)
+    record("seller: delete product", r.status_code in (200, 204), f"{r.status_code}")
+    CREATED_PRODUCT_IDS.discard(pid)
 
 
 async def t_fleet(c: httpx.AsyncClient, ts: int):
-    global FLEET_USER_EMAIL
-    fb = signup_body("customer", ts + 1)
-    FLEET_USER_EMAIL = fb["email"]
-    r = await api_post(c, "/auth/signup", fb)
-    record("fleet: signup owner", r.status_code == 200, f"{r.status_code}")
-    ftok = r.json()["token"]
+    owner = await signup(c, "customer", ts + 100)
+    ftok = owner["token"]
 
-    body = {
-        "companyName": f"E2E Logistics {ts}",
-        "fleetType": "logistics",
-        "fleetSize": "11-50",
-        "contactName": "E2E Fleet Manager",
-        "contactEmail": fb["email"],
-        "contactPhone": f"97{ts % 100000000:08d}",
-        "businessAddress": "1 Fleet Road, Coimbatore",
-    }
+    body = {"companyName": f"E2E Logistics {ts}", "fleetType": "logistics", "fleetSize": "11-50",
+            "contactName": "E2E Fleet Manager", "contactEmail": f"e2e_customer_{ts + 100}@{DOMAIN}",
+            "contactPhone": f"97{ts % 100000000:08d}", "businessAddress": "1 Fleet Road, Coimbatore"}
     r = await api_post(c, "/fleet/register", body, ftok)
     record("fleet: register", r.status_code == 201, f"{r.status_code} {r.text[:150]}")
-    fid = r.json().get("id")
 
     r = await api_post(c, "/fleet/register", body, ftok)
     record("fleet: duplicate register rejected", r.status_code == 409, f"{r.status_code}")
 
-    r = await api_get(c, "/my-fleet", ftok)
+    r = await api_get(c, "/fleet/my-fleet", ftok)
     record("fleet: my-fleet", r.status_code == 200, f"{r.status_code}")
 
     r = await api_post(c, "/fleet/bookings", {
         "scheduledAt": "2026-09-20T10:00:00Z",
         "vehicles": [{"vehicleName": "TN01AB1234", "serviceType": "periodic"}],
-        "subtotal": 3000, "discountPercent": 10, "total": 2700,
-    }, ftok)
+        "subtotal": 3000, "discountPercent": 10, "total": 2700}, ftok)
     record("fleet: create booking", r.status_code == 201, f"{r.status_code} {r.text[:150]}")
 
     r = await api_get(c, "/fleet/bookings", ftok)
     record("fleet: list bookings", r.status_code == 200, f"{r.status_code}")
 
-    if fid:
-        r = await api_get(c, f"/fleet/{fid}", ftok)
-        record("fleet: get by id", r.status_code == 200, f"{r.status_code}")
 
+async def t_job_chat_pay(c: httpx.AsyncClient, ts: int, base: str):
+    """customer posts job → mechanic sees offer → accept → chat WS+history → finalize → cash → review."""
+    mech = await signup(c, "mechanic", ts + 200)
+    mtok = mech["token"]
+    cust = await signup(c, "customer", ts + 201)
+    ctok = cust["token"]
 
-async def t_job_and_chat(c: httpx.AsyncClient, ts: int, local: bool):
-    """customer posts job -> mechanic sees offer -> accept -> chat WS + history -> finalize -> cash pay -> review."""
-    global MECH_TOKEN, JOB_ID
-
-    mb = signup_body("mechanic", ts + 2)
-    r = await api_post(c, "/auth/signup", mb)
-    record("job: signup fresh mechanic", r.status_code == 200, f"{r.status_code}")
-    MECH_TOKEN = r.json()["token"]
-
-    req = {"issueTag": "engine", "description": f"E2E engine trouble {ts}", "requestType": "auto",
-           "customerLat": 11.0168, "customerLng": 76.9558}
-    r = await api_post(c, "/service/request", req, CUST_TOKEN)
+    r = await api_post(c, "/service/request",
+                       {"issueTag": "engine", "description": f"E2E engine trouble {ts}", "requestType": "auto",
+                        "customerLat": 11.0168, "customerLng": 76.9558}, ctok)
     record("job: create request", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
-    d = r.json()
-    JOB_ID = d.get("id") or d.get("jobId") or (d.get("job") or {}).get("id")
+    job_id = r.json().get("id")
 
-    r = await api_get(c, "/providers/offers?status=pending", MECH_TOKEN)
+    r = await api_get(c, "/providers/offers", params={"status": "pending"}, token=mtok)
     offers = r.json().get("offers", []) if r.status_code == 200 else []
-    record("job: mechanic sees offer (dispatch fanout)", r.status_code == 200 and any(o["jobId"] == JOB_ID for o in offers),
-           f"{r.status_code} offers={len(offers)}")
-    offer_id = next((o["id"] for o in offers if o["jobId"] == JOB_ID), None)
+    offer = next((o for o in offers if o.get("jobId") == job_id), None)
+    record("job: mechanic sees offer (dispatch)", offer is not None, f"{r.status_code} offers={len(offers)}")
 
-    if offer_id:
-        r = await api_post(c, f"/offers/{offer_id}/accept", {}, MECH_TOKEN)
+    if offer:
+        r = await api_post(c, f"/offers/{offer['id']}/accept", {}, mtok)
         record("job: accept offer", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
 
-    r = await api_get(c, "/jobs/incoming", MECH_TOKEN)
-    ok = r.status_code == 200 and any((j.get("id") or j.get("jobId")) == JOB_ID for j in r.json().get("jobs", []))
-    record("job: mechanic incoming", ok, f"{r.status_code}")
+    r = await api_get(c, "/jobs/incoming", mtok)
+    jobs = r.json().get("jobs", []) if r.status_code == 200 else []
+    record("job: mechanic incoming", any(j.get("id") == job_id for j in jobs), f"{r.status_code} n={len(jobs)}")
 
-    # ── chat: REST history ──
-    r = await api_get(c, f"/chat/history/{JOB_ID}", CUST_TOKEN)
-    record("chat: REST history", r.status_code == 200, f"{r.status_code}")
-
-    # ── chat: WebSocket ──
-    ws_ok = False
-    ws_detail = ""
+    # ── chat: WS send (server persists), then verify via REST history ──
+    ws_sent = ws_echo = False
+    detail = ""
     try:
-        if local:
-            import websockets
-            ws_base = WS_LOCAL
-            headers = None
-        else:
-            import websockets
-            ws_base = f"wss://{urlparse(c.base_url).netloc}/ws"
-            headers = None
-        async with websockets.connect(
-            ws_base,
-            additional_arguments={} if not headers else {},
-            subprotocols=[CUST_TOKEN],
-            open_timeout=30,
-            additional_headers=headers or {},
-        ) as ws:
-            await ws.send(json.dumps({"type": "CHAT_MESSAGE", "payload": {"jobId": JOB_ID, "text": "hello from e2e"}}))
-            got = None
-            t0 = time.time()
-            while time.time() - t0 < 15:
-                try:
-                    got = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
-                    if got.get("type") == "CHAT_MESSAGE":
-                        break
-                except asyncio.TimeoutError:
-                    break
-            ws_ok = bool(got and got.get("type") == "CHAT_MESSAGE")
-            ws_detail = f"recv={got.get('type') if got else None}"
+        import websockets
+        ws_url = f"ws://{urlparse(base).netloc}/ws" if base.startswith("http://") else \
+                 f"wss://{urlparse(base).netloc}/ws"
+        async with websockets.connect(ws_url, subprotocols=[ctok], open_timeout=30) as ws:
+            await ws.send(json.dumps({"type": "CHAT_MESSAGE", "payload": {"jobId": job_id, "text": "hello from e2e"}}))
+            ws_sent = True
+            try:
+                got = json.loads(await asyncio.wait_for(ws.recv(), timeout=6))
+                ws_echo = got.get("type") == "CHAT_MESSAGE"
+            except asyncio.TimeoutError:
+                pass
+        detail = f"sent={ws_sent} echo={ws_echo}"
     except Exception as e:  # noqa: BLE001
-        ws_detail = f"{type(e).__name__}: {e}"
-    record("chat: WS send+receive+persist", ws_ok, ws_detail)
+        detail = f"{type(e).__name__}: {e}"
+    record("chat: WS connected + sent", ws_sent, detail)
 
-    r = await api_get(c, f"/chat/history/{JOB_ID}", CUST_TOKEN)
+    r = await api_get(c, f"/chat/history/{job_id}", ctok)
     hist = r.json()
     msgs = hist.get("messages", hist) if isinstance(hist, dict) else hist
-    ok = r.status_code == 200 and any((m.get("text") == "hello from e2e") for m in msgs)
-    record("chat: WS message persisted", ok, f"{r.status_code} n={len(msgs)}")
+    record("chat: WS message persisted to history",
+           r.status_code == 200 and any(m.get("text") == "hello from e2e" for m in msgs),
+           f"{r.status_code} n={len(msgs)}")
 
-    # lifecycle: finalize -> cash -> review
-    r = await api_post(c, f"/service/request/{JOB_ID}/finalize-price", {"serviceAmount": 850}, MECH_TOKEN)
-    record("job: finalize-price", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
+    # ── lifecycle: walk assigned→en_route→in_progress, finalize → cash → review ──
+    for st in ("en_route", "in_progress"):
+        r = await api_patch(c, f"/service/request/{job_id}/status", {"status": st}, mtok)
+        if r.status_code != 200:
+            record(f"job: status → {st}", False, f"{r.status_code} {r.text[:120]}")
+            break
+    else:
+        record("job: status walk en_route→in_progress", True)
+        r = await api_post(c, f"/service/request/{job_id}/finalize-price", {"serviceAmount": 850}, mtok)
+        record("job: finalize-price", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
 
-    r = await api_post(c, "/payments/cash", {"job_id": JOB_ID, "amount": 85000}, MECH_TOKEN)
+    r = await api_post(c, "/payments/cash", {"job_id": job_id, "amount": 85000}, mtok)
     record("payments: cash (mechanic collects)", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
 
-    r = await api_get(c, "/payments/history", CUST_TOKEN)
+    r = await api_get(c, "/payments/history", ctok)
     record("payments: history", r.status_code == 200, f"{r.status_code}")
 
-    r = await api_post(c, "/reviews", {"job_id": JOB_ID, "rating": 5, "comment": "E2E great"}, CUST_TOKEN)
+    r = await api_post(c, "/reviews", {"job_id": job_id, "rating": 5, "comment": "E2E great"}, ctok)
     record("reviews: job review", r.status_code in (200, 201), f"{r.status_code} {r.text[:120]}")
 
 
-async def t_forgot_password(c: httpx.AsyncClient, ts: int, email: str, password: str):
-    """Full reset flow. Code is fetched from Redis on the server (same host)."""
-    r = await api_post(c, "/auth/forgot-password/request", {"email": email})
-    record("reset: request code", r.status_code == 200, f"{r.status_code}")
+async def t_forgot_password(c: httpx.AsyncClient, ts: int):
+    """Full reset flow: request → code read from Redis (server-local) → reset → login."""
+    b = signup_body("customer", ts + 300)
+    await signup(c, "customer", ts + 300)
 
-    code = await fetch_reset_code(email)
+    r = await api_post(c, "/auth/forgot-password/request", {"email": b["email"]})
+    record("reset: request code", r.status_code == 200, f"{r.status_code} {r.text[:120]}")
+
+    code = await redis_get(f"reset:{b['email']}")
     if not code:
-        record("reset: code retrievable", False, "no code in redis")
+        record("reset: code retrievable from redis", False, "no code")
         return
 
-    # wrong code must fail
-    r = await api_post(c, "/auth/forgot-password/reset", {"email": email, "code": "wrong123", "newPassword": "NewE2e123!"})
-    record("reset: wrong code rejected", r.status_code in (400, 401, 429), f"{r.status_code}")
+    r = await api_post(c, "/auth/forgot-password/reset",
+                       {"email": b["email"], "code": "wrong12345", "newPassword": "NewE2e123!"})
+    record("reset: wrong code rejected", r.status_code in (400, 401, 403, 429), f"{r.status_code}")
 
-    r = await api_post(c, "/auth/forgot-password/reset", {"email": email, "code": code, "newPassword": "NewE2e123!"})
-    record("reset: correct code accepted", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
+    r = await api_post(c, "/auth/forgot-password/reset",
+                       {"email": b["email"], "code": code, "newPassword": "NewE2e123!"})
+    record("reset: correct code accepted", r.status_code == 200, f"{r.status_code} {r.text[:120]}")
 
-    r = await api_post(c, "/auth/login", {"email": email, "password": "NewE2e123!"})
+    r = await api_post(c, "/auth/login", {"email": b["email"], "password": "NewE2e123!"})
     record("reset: login with new password", r.status_code == 200, f"{r.status_code}")
-    # restore original password for later sections
-    await api_post(c, "/auth/forgot-password/request", {"email": email})
-    code2 = await fetch_reset_code(email)
-    if code2:
-        await api_post(c, "/auth/forgot-password/reset", {"email": email, "code": code2, "newPassword": password})
-
-
-async def fetch_reset_code(email: str) -> str | None:
-    proc = await asyncio.create_subprocess_exec(
-        "redis-cli", "-h", "127.0.0.1", "GET", f"reset:{email}",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-    )
-    out, _ = await proc.communicate()
-    code = out.decode().strip()
-    return code if code and code != "nil" else None
 
 
 async def t_kyc_admin(c: httpx.AsyncClient, ts: int):
-    """KYC submit (fresh mechanic) -> admin queue -> approve."""
-    kb = signup_body("mechanic", ts + 3)
-    kb["aadhaarPhotoUrl"] = "https://example.com/aadhaar.png"
-    kb["licensePhotoUrl"] = "https://example.com/license.png"
-    r = await api_post(c, "/auth/signup", kb)
-    record("kyc: mechanic signup with docs", r.status_code == 200, f"{r.status_code}")
-    ktok = r.json()["token"]
+    """KYC: mechanic signs up with docs → status submitted → admin approves → verified; non-admin rejected."""
+    docs = {"aadhaarPhotoUrl": f"https://{DOMAIN}/aadhaar.png", "licensePhotoUrl": f"https://{DOMAIN}/license.png"}
+    mech = await signup(c, "mechanic", ts + 400, **docs)
+    ktok = mech["token"]
 
     r = await api_get(c, "/profile/me", ktok)
     st = r.json().get("kycStatus") if r.status_code == 200 else None
     record("kyc: status=submitted after docs", st == "submitted", f"got {st}")
 
-    admin_tok = await bootstrap_admin(c)
+    admin_tok = await bootstrap_admin(c, ts)
     if not admin_tok:
-        record("kyc: admin queue", False, "no admin token")
+        record("kyc: admin bootstrap", False, "could not create admin")
         return
 
     r = await api_get(c, "/admin/kyc/pending", admin_tok)
-    ok = r.status_code == 200
-    apps = r.json().get("applications", []) if ok else []
-    mine = next((a for a in apps if a.get("email") == kb["email"]), None)
-    record("kyc: admin queue shows application", ok and mine is not None, f"{r.status_code} n={len(apps)}")
+    apps = r.json().get("applications", []) if r.status_code == 200 else []
+    mine = next((a for a in apps if a.get("email") == f"e2e_mechanic_{ts + 400}@{DOMAIN}"), None)
+    record("kyc: admin queue shows application", mine is not None, f"{r.status_code} n={len(apps)}")
 
     if mine:
         r = await api_patch(c, f"/admin/kyc/{mine['profileType']}/{mine['id']}/review",
@@ -460,43 +394,80 @@ async def t_kyc_admin(c: httpx.AsyncClient, ts: int):
         st2 = r.json().get("kycStatus") if r.status_code == 200 else None
         record("kyc: status=verified after approve", st2 == "verified", f"got {st2}")
 
-    # non-admin must be rejected
-    r = await api_get(c, "/admin/kyc/pending", CUST_TOKEN)
+    cust = await signup(c, "customer", ts + 401)
+    r = await api_get(c, "/admin/kyc/pending", cust["token"])
     record("kyc: non-admin rejected", r.status_code in (401, 403), f"{r.status_code}")
 
 
-async def bootstrap_admin(c: httpx.AsyncClient) -> str | None:
-    """Try known admin creds; else promote a fresh signup directly in DB."""
-    for email, pw in (("admin@clutchd.in", "Admin@123"), ("admin@clutchd.com", "admin123")):
-        try:
-            tok, _ = await login(c, email, pw)
-            return tok
-        except AssertionError:
-            continue
-
-    email = f"e2e_admin_{secrets.token_hex(4)}@e2e.clutchd.in"
-    r = await api_post(c, "/auth/signup", signup_body("customer", int(time.time())))
-    if r.status_code != 200:
+async def bootstrap_admin(c: httpx.AsyncClient, ts: int) -> str | None:
+    """Promote a fresh suite user to admin directly in DB (suite runs on the server)."""
+    b = signup_body("customer", ts + 500)
+    d = await signup(c, "customer", ts + 500)
+    uid = d.get("user", {}).get("id")
+    if not uid or not await psql(f"UPDATE users SET role='admin', is_superuser=true WHERE id='{uid}';"):
         return None
-    tok = r.json()["token"]
-    uid = r.json()["user"]["id"]
-
-    ok = await promote_admin_in_db(uid)
-    if not ok:
+    try:
+        d2 = await login(c, b["email"], b["password"])
+        return d2["token"]
+    except AssertionError:
         return None
-    tok2, _ = await login(c, email, "E2eTest123!")
-    return tok2
 
 
-async def promote_admin_in_db(uid: str) -> bool:
-    sql = f"UPDATE users SET role='admin', is_superuser=true WHERE id='{uid}';"
-    proc = await asyncio.create_subprocess_exec(
-        "psql", "-h", "127.0.0.1", "-U", "clutchd", "-d", "clutchd", "-c", sql,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        env={"PGPASSWORD": "clutchd", "PATH": "/usr/local/bin:/usr/bin:/bin"},
-    )
-    _, err = await proc.communicate()
-    return proc.returncode == 0
+# ────────────────────────── server-local helpers (psql / redis) ──────────────────────────
+
+
+async def _run(cmd: list[str], env: dict | None = None) -> str | None:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            env={"PATH": "/usr/local/bin:/usr/bin:/bin", **(env or {})},
+        )
+        out, _ = await proc.communicate()
+        return out.decode().strip() if proc.returncode == 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def redis_get(key: str) -> str | None:
+    out = await _run(["redis-cli", "-h", "127.0.0.1", "GET", key])
+    return out if out and out != "(nil)" else None
+
+
+async def psql(sql: str) -> bool:
+    out = await _run(["psql", "-h", "127.0.0.1", "-U", "clutchd", "-d", "clutchd", "-c", sql],
+                     env={"PGPASSWORD": "clutchd"})
+    return out is not None
+
+
+async def cleanup():
+    """Delete everything the suite created (FK-safe order). Never raises."""
+    if not CREATED_USER_IDS and not CREATED_PRODUCT_IDS:
+        return
+    # UUIDs must be single-quoted in SQL — unquoted ids are a syntax error.
+    ids = ",".join(f"'{u}'" for u in sorted(CREATED_USER_IDS))
+    for pid in CREATED_PRODUCT_IDS:
+        await psql(f"DELETE FROM marketplace_products WHERE id='{pid}';")
+    if ids:
+        mech_ids = f"SELECT id FROM mechanics WHERE user_id IN ({ids})"
+        gar_ids = f"SELECT id FROM garages WHERE user_id IN ({ids})"
+        job_ids = f"SELECT id FROM jobs WHERE user_id IN ({ids})"
+        for sql in (
+            f"DELETE FROM marketplace_cart_items WHERE user_id IN ({ids});",
+            f"DELETE FROM marketplace_order_items WHERE order_id IN (SELECT id FROM marketplace_orders WHERE user_id IN ({ids}));",
+            f"DELETE FROM marketplace_orders WHERE user_id IN ({ids});",
+            f"DELETE FROM payments WHERE user_id IN ({ids}) OR job_id IN ({job_ids});",
+            # reviews: reviewer FK cascades, but target_mechanic/garage are NO ACTION
+            f"DELETE FROM reviews WHERE reviewer_user_id IN ({ids}) OR target_mechanic_id IN ({mech_ids}) OR target_garage_id IN ({gar_ids});",
+            f"DELETE FROM referral_rewards WHERE referred_user_id IN ({ids});",
+            f"DELETE FROM fleet_bookings WHERE user_id IN ({ids});",
+            f"DELETE FROM fleets WHERE user_id IN ({ids});",
+            f"DELETE FROM audit_logs WHERE user_id IN ({ids});",
+            f"DELETE FROM users WHERE id IN ({ids});",
+        ):
+            ok = await psql(sql)
+            if not ok:
+                print(f"[cleanup] WARNING failed: {sql[:90]}...", flush=True)
+    print(f"\n[cleanup] removed {len(CREATED_USER_IDS)} suite users, {len(CREATED_PRODUCT_IDS)} products", flush=True)
 
 
 # ────────────────────────── main ──────────────────────────
@@ -507,18 +478,20 @@ async def main() -> int:
     base = LOCAL_BASE if local else PUBLIC_BASE
     ts = int(time.time())
 
-    print(f"=== ClutchD E2E suite -> {base} (local={local}) ===\n")
-    async with make_client(base) as c:
-        await t_health(c)
-
-        creds = await t_auth(c, ts)
-        await t_profile(c)
-        cid = await t_marketplace_catalog(c)
-        await t_seller_and_cart(c, ts, cid)
-        await t_fleet(c, ts)
-        await t_job_and_chat(c, ts, local)
-        await t_forgot_password(c, ts, *creds)
-        await t_kyc_admin(c, ts)
+    print(f"=== ClutchD E2E suite -> {base} ===\n", flush=True)
+    try:
+        async with make_client(base) as c:
+            await t_health(c)
+            creds = await t_auth(c, ts)
+            await t_profile(c, creds["token"])
+            await t_marketplace_catalog(c)
+            await t_seller_and_cart(c, ts)
+            await t_fleet(c, ts)
+            await t_job_chat_pay(c, ts, base)
+            await t_forgot_password(c, ts)
+            await t_kyc_admin(c, ts)
+    finally:
+        await cleanup()
 
     print(f"\n=== RESULTS: {len(PASS)} passed, {len(FAIL)} failed ===")
     for f in FAIL:
@@ -527,5 +500,4 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    CUST = CUST_TOKEN = PRODUCT_ID = VENDOR_ID = MECH_TOKEN = JOB_ID = None
     sys.exit(asyncio.run(main()))

@@ -131,8 +131,10 @@ async def profile_update_me(body: ProfileUpdateRequest, db: DbSession, user: Cur
             profile.phone = body.phone
         if body.address is not None:
             profile.address = body.address
-        await db.flush()
-        return {
+        # Capture scalar values BEFORE flush: the model's onupdate=func.now()
+        # makes accessing updated_at post-flush trigger a lazy refresh (IO),
+        # which raises MissingGreenlet inside this sync context.
+        resp = {
             "id": str(profile.id),
             "full_name": profile.full_name,
             "phone": profile.phone,
@@ -141,6 +143,8 @@ async def profile_update_me(body: ProfileUpdateRequest, db: DbSession, user: Cur
             "created_at": profile.created_at.isoformat() if profile.created_at else None,
             "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
         }
+        await db.flush()
+        return resp
 
     if user.role == UserRole.mechanic.value:
         from app.models.mechanic import Mechanic
