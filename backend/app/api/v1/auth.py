@@ -197,6 +197,7 @@ async def oauth_google(request: Request, body: GoogleOAuthRequest, db: DbSession
                 timeout=15.0,
             )
             if r.status_code != 200:
+                logger.warning("Google tokeninfo rejected token: status=%s body=%s", r.status_code, r.text[:200])
                 raise HTTPException(status_code=401, detail="Invalid Google token")
             data = r.json()
     except httpx.TimeoutException:
