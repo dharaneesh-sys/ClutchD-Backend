@@ -229,6 +229,46 @@ async def test_mechanic(db_session: AsyncSession) -> "Mechanic":
 
 
 @pytest_asyncio.fixture
+async def test_seller(db_session: AsyncSession):
+    """Create and persist a ``Seller`` with its own ``User`` (role='seller')."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.models.seller import Seller
+    from app.models.user import User
+
+    user = User(
+        id=uuid.uuid4(),
+        email="seller@example.com",
+        password_hash="$2b$12$abcdefghijklmnopqrstuvwx1234567890abcdefghijklmnopqrs",
+        role="seller",
+        is_active=True,
+        is_superuser=False,
+        created_at=datetime.now(timezone.utc),
+    )
+    db_session.add(user)
+    await db_session.flush()
+
+    seller = Seller(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        store_name="Test Parts Store",
+        phone="+919876543210",
+        created_at=datetime.now(timezone.utc),
+    )
+    db_session.add(seller)
+    await db_session.commit()
+
+    stmt = (
+        select(Seller)
+        .where(Seller.id == seller.id)
+        .options(selectinload(Seller.user))
+    )
+    result = await db_session.execute(stmt)
+    return result.scalar_one()
+
+
+@pytest_asyncio.fixture
 async def test_garage(db_session: AsyncSession) -> "Garage":
     """Create and persist a ``Garage`` with its own ``User``.
 

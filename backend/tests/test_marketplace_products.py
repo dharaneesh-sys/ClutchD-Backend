@@ -3,7 +3,7 @@
 Covers POST /api/products (and alias POST /api/marketplace/products),
 GET /products/my-listings, PATCH/PUT and DELETE own-product rules.
 
-Seller roles: mechanic | garage | admin. Images arrive as URLs returned by
+Seller roles: seller | admin. Images arrive as URLs returned by
 POST /api/uploads (``/static/uploads/...``) or absolute http(s) URLs.
 """
 
@@ -61,16 +61,16 @@ def _payload(**overrides) -> dict:
 
 
 async def test_create_product_201(
-    db_session: AsyncSession, client: AsyncClient, test_mechanic
+    db_session: AsyncSession, client: AsyncClient, test_seller
 ):
     """MP-P1: mechanic creates a product -> 201 ProductResponse, vendor auto-provisioned."""
-    user = test_mechanic.user
+    user = test_seller.user
     r = await client.post(BASE, json=_payload(), headers=_headers(user))
     assert r.status_code == 201, r.text
     data = r.json()
     assert data["name"] == "Brake Pad Set"
     assert abs(float(data["price"]) - 1499.50) < 0.01
-    assert data["vendor"] == "Test Mechanic"  # auto-provisioned from mechanic profile
+    assert data["vendor"] == "Test Parts Store"  # auto-provisioned from seller profile
     assert data["vendor_id"] is not None
     assert "id" in data
 
@@ -82,15 +82,14 @@ async def test_create_product_201(
 
 
 async def test_create_product_alias_201(
-    db_session: AsyncSession, client: AsyncClient, test_garage
+    db_session: AsyncSession, client: AsyncClient, test_seller
 ):
     """MP-P2: alias POST /api/marketplace/products works the same."""
-    user = test_garage.user
-    r = await client.post(ALIAS, json=_payload(name="Oil Filter"), headers=_headers(user))
+    r = await client.post(ALIAS, json=_payload(name="Oil Filter"), headers=_headers(test_seller.user))
     assert r.status_code == 201, r.text
     data = r.json()
     assert data["name"] == "Oil Filter"
-    assert data["vendor"] == "Test Garage"
+    assert data["vendor"] == "Test Parts Store"
 
 
 async def test_create_product_403_customer(
@@ -108,40 +107,40 @@ async def test_create_product_401_anon(db_session: AsyncSession, client: AsyncCl
 
 
 async def test_create_product_422_bad_price(
-    db_session: AsyncSession, client: AsyncClient, test_mechanic
+    db_session: AsyncSession, client: AsyncClient, test_seller
 ):
     """MP-P5: negative price fails validation."""
-    r = await client.post(BASE, json=_payload(price=-5), headers=_headers(test_mechanic.user))
+    r = await client.post(BASE, json=_payload(price=-5), headers=_headers(test_seller.user))
     assert r.status_code == 422, r.text
 
 
 async def test_create_product_422_blank_name(
-    db_session: AsyncSession, client: AsyncClient, test_mechanic
+    db_session: AsyncSession, client: AsyncClient, test_seller
 ):
     """MP-P6: blank name fails validation."""
-    r = await client.post(BASE, json=_payload(name="   "), headers=_headers(test_mechanic.user))
+    r = await client.post(BASE, json=_payload(name="   "), headers=_headers(test_seller.user))
     assert r.status_code == 422, r.text
 
 
 async def test_create_product_422_unknown_category(
-    db_session: AsyncSession, client: AsyncClient, test_mechanic
+    db_session: AsyncSession, client: AsyncClient, test_seller
 ):
     """MP-P7: unknown category string is rejected."""
     r = await client.post(
-        BASE, json=_payload(category="no-such-category"), headers=_headers(test_mechanic.user)
+        BASE, json=_payload(category="no-such-category"), headers=_headers(test_seller.user)
     )
     assert r.status_code == 422, r.text
 
 
 async def test_create_product_category_slug_resolved(
-    db_session: AsyncSession, client: AsyncClient, test_mechanic
+    db_session: AsyncSession, client: AsyncClient, test_seller
 ):
     """MP-P8: category slug resolves to category_id + denormalized name."""
     cat = MarketplaceCategory(id=uuid.uuid4(), slug="brakes", name="Brakes")
     db_session.add(cat)
     await db_session.commit()
     r = await client.post(
-        BASE, json=_payload(category="brakes"), headers=_headers(test_mechanic.user)
+        BASE, json=_payload(category="brakes"), headers=_headers(test_seller.user)
     )
     assert r.status_code == 201, r.text
     data = r.json()
@@ -150,11 +149,11 @@ async def test_create_product_category_slug_resolved(
 
 
 async def test_my_listings_isolation(
-    db_session: AsyncSession, client: AsyncClient, test_mechanic
+    db_session: AsyncSession, client: AsyncClient, test_seller
 ):
     """MP-P9: my-listings returns only the caller's own products."""
-    me = test_mechanic.user
-    other = await _make_user(db_session, "mechanic", f"other-{uuid.uuid4().hex}@ex.com")
+    me = test_seller.user
+    other = await _make_user(db_session, "seller", f"other-{uuid.uuid4().hex}@ex.com")
 
     r1 = await client.post(BASE, json=_payload(name="Mine A"), headers=_headers(me))
     assert r1.status_code == 201, r1.text
@@ -175,11 +174,11 @@ async def test_my_listings_isolation(
 
 
 async def test_update_owner_vs_other_vs_admin(
-    db_session: AsyncSession, client: AsyncClient, test_mechanic
+    db_session: AsyncSession, client: AsyncClient, test_seller
 ):
     """MP-P10: owner can PATCH, stranger gets 403, admin can PATCH."""
-    me = test_mechanic.user
-    other = await _make_user(db_session, "garage", f"other-{uuid.uuid4().hex}@ex.com")
+    me = test_seller.user
+    other = await _make_user(db_session, "seller", f"other-{uuid.uuid4().hex}@ex.com")
     admin = await _make_user(db_session, "admin", f"admin-{uuid.uuid4().hex}@ex.com")
 
     created = await client.post(BASE, json=_payload(name="Wrench"), headers=_headers(me))
@@ -198,11 +197,11 @@ async def test_update_owner_vs_other_vs_admin(
 
 
 async def test_delete_owner_vs_other_vs_admin(
-    db_session: AsyncSession, client: AsyncClient, test_mechanic
+    db_session: AsyncSession, client: AsyncClient, test_seller
 ):
     """MP-P11: owner can DELETE, stranger gets 403, admin can DELETE any."""
-    me = test_mechanic.user
-    other = await _make_user(db_session, "mechanic", f"other-{uuid.uuid4().hex}@ex.com")
+    me = test_seller.user
+    other = await _make_user(db_session, "seller", f"other-{uuid.uuid4().hex}@ex.com")
     admin = await _make_user(db_session, "admin", f"admin-{uuid.uuid4().hex}@ex.com")
 
     created = await client.post(BASE, json=_payload(name="Deletable"), headers=_headers(me))
@@ -219,10 +218,10 @@ async def test_delete_owner_vs_other_vs_admin(
 
 
 async def test_update_delete_404_missing(
-    db_session: AsyncSession, client: AsyncClient, test_mechanic
+    db_session: AsyncSession, client: AsyncClient, test_seller
 ):
     """MP-P12: PATCH/DELETE on unknown id returns 404."""
-    headers = _headers(test_mechanic.user)
+    headers = _headers(test_seller.user)
     missing = str(uuid.uuid4())
     r1 = await client.patch(f"{BASE}/{missing}", json={"price": 1}, headers=headers)
     assert r1.status_code == 404, r1.text

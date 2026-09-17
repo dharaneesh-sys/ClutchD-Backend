@@ -312,13 +312,13 @@ async def _ensure_owner_or_admin(db: DbSession, product: MarketplaceProduct, use
     raise HTTPException(status_code=403, detail="Not your product")
 
 
-_seller_roles = require_roles(UserRole.seller, UserRole.mechanic, UserRole.garage, UserRole.admin)
+_seller_roles = require_roles(UserRole.seller, UserRole.admin)
 
 
 @router.post("/products", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
 @router.post("/marketplace/products", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
 async def create_product(body: ProductCreate, db: DbSession, user: User = Depends(_seller_roles)):
-    """Create a marketplace product as a mechanic/garage/admin seller.
+    """Create a marketplace product as a parts seller (seller/admin roles).
 
     Images are uploaded first via POST /api/uploads; pass the returned
     ``url`` (``/static/uploads/...``) or an absolute http(s) URL as ``image``.
