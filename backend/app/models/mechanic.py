@@ -22,7 +22,7 @@ class Mechanic(Base):
     location_address: Mapped[str] = mapped_column(String(512), default="")
     lat: Mapped[float] = mapped_column(Float, nullable=False)
     lon: Mapped[float] = mapped_column(Float, nullable=False)
-    rating: Mapped[float] = mapped_column(Float, default=4.5)
+    rating: Mapped[float] = mapped_column(Float, default=0.0)  # real avg from reviews; 0 = no reviews yet
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
     available: Mapped[bool] = mapped_column(Boolean, default=True)
     upi_id: Mapped[str | None] = mapped_column(String(128), nullable=True, comment="Mechanic UPI ID for payouts")

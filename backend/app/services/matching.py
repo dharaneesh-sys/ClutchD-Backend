@@ -498,7 +498,8 @@ def mechanic_to_map_dict(m: RankedMechanic) -> dict:
         "id": str(m.id),
         "name": m.full_name,
         "location": [m.lat, m.lon],
-        "rating": round(m.rating, 1),
+        # 0 = no reviews yet → frontend shows "New" instead of a star rating.
+        "rating": round(m.rating, 1) if m.rating else None,
         "expertise": m.expertise,
         "distanceKm": round(m.distance_m / 1000.0, 2),
     }
@@ -509,7 +510,7 @@ def garage_to_map_dict(g: RankedGarage) -> dict:
         "id": str(g.id),
         "name": g.garage_name,
         "location": [g.lat, g.lon],
-        "rating": round(g.rating, 1),
+        "rating": round(g.rating, 1) if g.rating else None,
         "services": _coerce_str_list(g.services),
         "distanceKm": round(g.distance_m / 1000.0, 2),
     }

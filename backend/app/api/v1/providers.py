@@ -66,6 +66,20 @@ async def update_provider_location(
         # can trigger a lazy refresh (MissingGreenlet) inside the async session.
         lat, lon = mech.lat, mech.lon
         await db.flush()
+        # Live tracking: push the new position to the customer of every active
+        # job (assigned/en_route/in_progress) so their map marker and ETA
+        # update while the mechanic is on the road, not just at state changes.
+        from app.models.job import Job
+        from app.ws.manager import push_location_update
+
+        r2 = await db.execute(
+            select(Job).where(
+                Job.assigned_mechanic_id == mech.id,
+                Job.status.in_(["assigned", "en_route", "in_progress"]),
+            )
+        )
+        for active_job in r2.scalars():
+            await push_location_update(str(active_job.user_id), str(active_job.id), [lat, lon])
         return {"ok": True, "role": "mechanic", "latitude": lat, "longitude": lon}
 
     if user.role == UserRole.garage.value:
@@ -77,6 +91,18 @@ async def update_provider_location(
         garage.lon = body.longitude
         lat, lon = garage.lat, garage.lon
         await db.flush()
+        # Live tracking for garages, same as mechanics above.
+        from app.models.job import Job
+        from app.ws.manager import push_location_update
+
+        r2 = await db.execute(
+            select(Job).where(
+                Job.assigned_garage_id == garage.id,
+                Job.status.in_(["assigned", "en_route", "in_progress"]),
+            )
+        )
+        for active_job in r2.scalars():
+            await push_location_update(str(active_job.user_id), str(active_job.id), [lat, lon])
         return {"ok": True, "role": "garage", "latitude": lat, "longitude": lon}
 
     raise HTTPException(status_code=403, detail="Only mechanics and garages can check in a provider location")
