@@ -1,0 +1,12 @@
+[Unit]
+Description=ClutchD API alert watchdog — alert when production API crashes or stays unhealthy
+After=network-online.target clutchd-api.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/clutchd-api-alerts.sh
+# Alert sending must survive an SSH drop mid-run.
+KillMode=process
+TimeoutStartSec=120
+User=root
