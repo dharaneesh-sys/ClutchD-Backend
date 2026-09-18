@@ -11,15 +11,30 @@ Production-oriented FastAPI service for the **ClutchD** on-demand mechanic platf
 - **JWT** auth, **bcrypt** passwords, optional **Google ID token** login
 - **WebSockets**: `GET ws://host/ws?token=...` (user channel + mechanic location updates) and `ws://host/ws/tracking/{job_id}?token=...`
 
-## Quick start (Docker)
+## Production deploy (server)
+
+**The production API runs on the host via systemd (`clutchd-api.service`), listening on `:8000`. Caddy (`:8080`) proxies to `127.0.0.1:8000`.** The Docker `api` service is an opt-in test container on `:8001` — it does **not** serve production traffic and is guarded by the `docker-api` compose profile so plain `docker compose up/restart` can never start it.
+
+On the server, deploy with:
+
+```bash
+cd ~/ClutchD-Backend && ./deploy-backend.sh
+```
+
+That pulls the latest code and restarts `clutchd-api` (the real API), then waits for health. Restarting the Docker `api` container does nothing to production.
+
+## Quick start (Docker, local)
 
 From this directory:
 
 ```bash
-docker compose up --build
+docker compose up --build          # db + redis only (api is opt-in)
+# or explicitly include the test API container:
+docker compose --profile docker-api up --build
 ```
 
-- REST: `http://localhost:8000/api/...`
+- REST (test container): `http://localhost:8001/api/...`
+- Host-run API (local dev): `http://localhost:8000/api/...`
 - Health: `http://localhost:8000/health`
 - OpenAPI: `http://localhost:8000/docs`
 
@@ -27,11 +42,11 @@ The API container runs `scripts/bootstrap_db.py` on start (creates PostGIS + tab
 
 ### Worker (Celery)
 
-The Celery worker is **disabled by default** (restart policy: `"no"`). It processes background tasks such as job assignment retries and notifications.
+The Celery worker is **opt-in** (`docker-api` profile, restart policy `"no"`). It processes background tasks such as job assignment retries and notifications.
 
 ```bash
 # Start the worker
-docker compose up -d worker
+docker compose --profile docker-api up -d worker
 
 # Stop the worker
 docker compose stop worker

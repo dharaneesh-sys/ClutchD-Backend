@@ -23,11 +23,18 @@ services:
     ports:
       - "6380:6379"
 
+  # PRODUCTION API RUNS ON THE HOST via systemd (clutchd-api.service, :8000).
+  # Caddy (:8080) proxies to 127.0.0.1:8000 — NOT to this container.
+  # This container is opt-in only (docker compose --profile docker-api up api)
+  # for local testing; plain `up`/`restart` can never start it, so a deploy
+  # can never accidentally "restart the backend" that was actually serving
+  # production traffic on the wrong process.
   api:
+    profiles: ["docker-api"]
     build:
       context: ./backend
       dockerfile: Dockerfile
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "8001:8000"
     environment:
@@ -51,7 +58,11 @@ services:
       retries: 3
       start_period: 30s
 
+  # Celery worker is idle (exited) — the host API runs tasks inline.
+  # Kept opt-in under the same profile so `docker compose up` doesn't
+  # try to (re)build/start services production doesn't use.
   worker:
+    profiles: ["docker-api"]
     build:
       context: ./backend
       dockerfile: Dockerfile.worker
