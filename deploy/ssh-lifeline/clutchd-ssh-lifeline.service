@@ -1,0 +1,12 @@
+[Unit]
+Description=ClutchD SSH lifeline — keep tailscaled + sshd alive so SSH never breaks
+After=network-online.target tailscaled.service ssh.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/clutchd-ssh-lifeline.sh
+# This watchdog restarts tailscaled/sshd — must survive an SSH drop mid-run.
+KillMode=process
+TimeoutStartSec=120
+User=root
