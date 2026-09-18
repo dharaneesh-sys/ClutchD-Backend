@@ -192,7 +192,12 @@ async def register_seller(db: AsyncSession, data: SellerRegister) -> tuple[str, 
 async def login(db: AsyncSession, email: str, password: str) -> tuple[str, dict, str]:
     r = await db.execute(select(User).where(User.email == email.lower()))
     user = r.scalar_one_or_none()
-    if not user or not verify_password(password, user.password_hash):
+    if not user:
+        # Unknown email → 404 (not 401) so the frontend can offer sign-up
+        # instead of a dead-end "invalid credentials" error. Wrong password
+        # on an existing account stays a generic 401 (no account enumeration).
+        raise AuthError("No account found with this email. Please sign up first.", 404)
+    if not verify_password(password, user.password_hash):
         raise AuthError("Invalid email or password", 401)
     if not user.is_active:
         raise AuthError("Account disabled", 403)

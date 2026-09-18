@@ -742,6 +742,93 @@ async def list_orders(
     return OrderListResponse(orders=order_responses)
 
 
+# ── Seller sales ─────────────────────────────────────────────────
+
+@router.get("/orders/sales", response_model=OrderListResponse)
+@router.get("/marketplace/orders/sales", response_model=OrderListResponse)
+async def list_my_sales(
+    db: DbSession,
+    user: User = Depends(_seller_roles),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """Orders containing at least one product sold by the calling seller.
+
+    An order belongs to a seller when one of its items references a product
+    they own (seller_user_id, or the legacy vendor-name match used by
+    /products/my-listings). The response only includes the matching items,
+    so totals shown to the seller reflect their own goods.
+    """
+    display = await _seller_display_name(db, user)
+
+    # Distinct orders joined to their items → products owned by this seller.
+    result = await db.execute(
+        select(MarketplaceOrder)
+        .join(MarketplaceOrderItem, MarketplaceOrderItem.order_id == MarketplaceOrder.id)
+        .join(
+            MarketplaceProduct,
+            MarketplaceProduct.id == MarketplaceOrderItem.product_id,
+        )
+        .where(
+            or_(
+                MarketplaceProduct.seller_user_id == user.id,
+                (MarketplaceProduct.seller_user_id.is_(None)) & (MarketplaceProduct.vendor == display),
+            )
+        )
+        .order_by(MarketplaceOrder.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .distinct()
+    )
+    orders = result.scalars().all()
+
+    order_responses = []
+    for order in orders:
+        items_result = await db.execute(
+            select(MarketplaceOrderItem).where(MarketplaceOrderItem.order_id == order.id)
+        )
+        all_items = items_result.scalars().all()
+        # Keep only this seller's line items.
+        product_ids = {i.product_id for i in all_items if i.product_id is not None}
+        owned_ids = set()
+        if product_ids:
+            owned = await db.execute(
+                select(MarketplaceProduct.id).where(
+                    MarketplaceProduct.id.in_(product_ids),
+                    or_(
+                        MarketplaceProduct.seller_user_id == user.id,
+                        (MarketplaceProduct.seller_user_id.is_(None)) & (MarketplaceProduct.vendor == display),
+                    ),
+                )
+            )
+            owned_ids = {row[0] for row in owned.all()}
+        my_items = [i for i in all_items if i.product_id in owned_ids]
+        if not my_items:
+            continue
+        order_responses.append(
+            OrderResponse(
+                id=order.id,
+                user_id=order.user_id,
+                total=sum((i.price * Decimal(i.quantity) for i in my_items), Decimal("0")).quantize(Decimal("0.01")),
+                status=order.status,
+                address=order.address,
+                payment=order.payment,
+                items=[
+                    OrderItemData(
+                        product_id=item.product_id,
+                        name=item.name,
+                        quantity=item.quantity,
+                        price=item.price,
+                    )
+                    for item in my_items
+                ],
+                created_at=order.created_at,
+            )
+        )
+
+    return OrderListResponse(orders=order_responses)
+
+
 # ── Cart ─────────────────────────────────────────────────────────────────
 
 @router.get("/marketplace/cart", response_model=list[CartItemResponse])
