@@ -448,6 +448,92 @@ async def list_garages(db: DbSession, user: AdminUser):
     return {"garages": result_list}
 
 
+# ── Mechanic Payout Ledger ────────────────────────────────────
+@router.get("/payouts")
+async def mechanic_payout_ledger(db: DbSession, user: AdminUser):
+    """Real payout ledger per provider, computed from jobs + captured payments.
+
+    - `serviceAmount` (the provider's share set at job completion) is what the
+      platform owes the provider until a payout is made.
+    - A captured payment marks the job settled from the customer's side; the
+      provider's share becomes "pending payout" (cash-in-hand reconciliation
+      or Razorpay Route transfers happen outside this endpoint).
+    - No demo rows: providers with zero completed jobs don't appear.
+    """
+    from app.models.enums import PaymentStatus
+
+    # All jobs that have money on them, grouped by provider.
+    jobs_q = await db.execute(
+        select(Job)
+        .where(
+            or_(
+                Job.assigned_mechanic_id.isnot(None),
+                Job.assigned_garage_id.isnot(None),
+            ),
+            Job.service_amount.isnot(None),
+        )
+    )
+    jobs = jobs_q.scalars().all()
+
+    if not jobs:
+        return {"payouts": []}
+
+    job_ids = [j.id for j in jobs]
+    paid_q = await db.execute(
+        select(Payment.job_id, func.count(Payment.id), func.coalesce(func.sum(Payment.amount), 0))
+        .where(
+            Payment.job_id.in_(job_ids),
+            Payment.status.in_([PaymentStatus.succeeded.value, "captured"]),
+        )
+        .group_by(Payment.job_id)
+    )
+    paid_by_job = {row[0]: (int(row[1]), int(row[2])) for row in paid_q.all()}
+
+    mechanic_ids = {j.assigned_mechanic_id for j in jobs if j.assigned_mechanic_id}
+    garage_ids = {j.assigned_garage_id for j in jobs if j.assigned_garage_id}
+    mech_rows = await db.execute(select(Mechanic).where(Mechanic.id.in_(mechanic_ids))) if mechanic_ids else None
+    gar_rows = await db.execute(select(Garage).where(Garage.id.in_(garage_ids))) if garage_ids else None
+    mech_names = {m.id: (m.full_name or f"Mechanic {str(m.id)[:8]}") for m in (mech_rows.scalars().all() if mech_rows else [])}
+    gar_names = {g.id: (g.garage_name or f"Garage {str(g.id)[:8]}") for g in (gar_rows.scalars().all() if gar_rows else [])}
+
+    ledger: dict[tuple[str, UUID], dict] = {}
+    for j in jobs:
+        if j.assigned_mechanic_id:
+            key = ("mechanic", j.assigned_mechanic_id)
+            name = mech_names.get(j.assigned_mechanic_id, "Unknown")
+        elif j.assigned_garage_id:
+            key = ("garage", j.assigned_garage_id)
+            name = gar_names.get(j.assigned_garage_id, "Unknown")
+        else:
+            continue
+
+        entry = ledger.setdefault(key, {
+            "mechanicId": f"{key[0]}-{key[1]}",
+            "mechanicName": name,
+            "providerType": key[0],
+            "totalJobs": 0,
+            "completedJobs": 0,
+            "pendingJobs": 0,
+            "pendingAmount": 0.0,
+            "totalEarned": 0.0,
+            "lastPayoutDate": None,
+            "status": "below_threshold",
+            "upiId": j.provider_upi_id,
+        })
+        entry["totalJobs"] += 1
+        service_amount = float(j.service_amount or 0)
+        captured = paid_by_job.get(j.id)
+        if j.status == "completed" or captured:
+            entry["completedJobs"] += 1
+            entry["totalEarned"] += service_amount
+            entry["pendingAmount"] += service_amount
+        else:
+            entry["pendingJobs"] += 1
+
+    payouts = sorted(ledger.values(), key=lambda e: e["pendingAmount"], reverse=True)
+    return {"payouts": payouts}
+
+
 # ── Payments List ─────────────────────────────────────────────
 @router.get("/payments")
 async def list_payments(

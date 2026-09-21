@@ -59,6 +59,15 @@ async def list_categories(db: DbSession, search: str | None = Query(None, max_le
     result = await db.execute(query)
     categories = result.scalars().all()
 
+    # Live per-category product counts — the product_count column is a stale
+    # seed-time snapshot (bootstrap_db.py), so compute from marketplace_products.
+    count_rows = await db.execute(
+        select(MarketplaceProduct.category_id, func.count(MarketplaceProduct.id))
+        .where(MarketplaceProduct.category_id.isnot(None))
+        .group_by(MarketplaceProduct.category_id)
+    )
+    live_counts: dict[uuid.UUID, int] = {row[0]: int(row[1]) for row in count_rows.all()}
+
     return CategoryListResponse(
         categories=[
             CategoryResponse(
@@ -67,7 +76,7 @@ async def list_categories(db: DbSession, search: str | None = Query(None, max_le
                 name=c.name,
                 description=c.description,
                 image=c.image,
-                product_count=c.product_count,
+                product_count=live_counts.get(c.id, 0),
                 created_at=c.created_at,
             )
             for c in categories
@@ -288,6 +297,25 @@ async def _resolve_category(
         found = result.scalar_one_or_none()
         if found:
             return found.id, found.name
+        # The UI consolidates every non-accessory category into one "Spare
+        # Parts" tile (slug "spare-parts") which the seeder never created as
+        # a DB row — uploads filed under it used to 422. Ensure the row exists
+        # so the product gets a real category_id and the tile count stays exact.
+        if raw.lower().replace("_", "-") in {"spare-parts", "spareparts", "spares"}:
+            existing = await db.execute(
+                select(MarketplaceCategory).where(MarketplaceCategory.slug == "spare-parts")
+            )
+            spare = existing.scalar_one_or_none()
+            if not spare:
+                spare = MarketplaceCategory(
+                    slug="spare-parts",
+                    name="Spare Parts",
+                    description="Engine, brake, electrical, suspension, filters and other replacement parts",
+                    product_count=0,
+                )
+                db.add(spare)
+                await db.flush()
+            return spare.id, spare.name
         raise HTTPException(status_code=422, detail="Unknown category")
     return None, None
 
