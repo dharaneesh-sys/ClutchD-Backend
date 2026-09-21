@@ -1,0 +1,10 @@
+Host clutchd-funnel
+    HostName clutchd-1.tail14cfb9.ts.net
+    Port 8443
+    User clutchd
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+    StrictHostKeyChecking accept-new
+    ConnectTimeout 15
+    ServerAliveInterval 30
+    ServerAliveCountMax 3

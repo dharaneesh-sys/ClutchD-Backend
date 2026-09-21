@@ -82,6 +82,20 @@ case "$FUNNEL_OUT" in
     ;;
 esac
 
+# ── 4b. SSH funnel (raw TCP 8443 -> :22) still configured? ──
+# The backup SSH path for when the tailnet itself is unreachable. Same
+# capture-then-grep pattern as above.
+SSH_FUNNEL_PORT="8443"
+case "$FUNNEL_OUT" in
+  *"$SSH_FUNNEL_PORT"*) : ;;
+  *)
+    log "ssh funnel tcp/$SSH_FUNNEL_PORT MISSING — re-enabling"
+    notify_api_alerts_log "ssh funnel tcp/$SSH_FUNNEL_PORT was gone — re-enabled by ssh-lifeline"
+    tailscale funnel --bg --tcp=$SSH_FUNNEL_PORT tcp://localhost:22 >> "$LOG" 2>&1
+    probl=1
+    ;;
+esac
+
 # ── 5. sshd alive AND listening? ──
 if ! systemctl is-active --quiet ssh; then
   log "sshd DOWN — restarting"
