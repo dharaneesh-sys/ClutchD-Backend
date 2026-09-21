@@ -19,6 +19,10 @@ _TOKEN_AUDIENCE = "clutchd-api"
 # Known weak/default secrets that should never be used in production
 _KNOWN_WEAK_SECRETS = {
     "change-me-in-production-use-openssl-rand-hex-32",
+    # 950f7a37… was hardcoded as a docker-compose default and shipped in git
+    # history (GitHub secret-scanning flagged it). Anyone with repo access
+    # could mint valid tokens for any user. Revoked 2026-09-21.
+    "950f7a372d6647e83034d1a92325cf5d62f78702ecee0d9f2335036a030011cf",
 }
 
 # Hashes of known weak secrets (catches copies/modifications)

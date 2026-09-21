@@ -41,7 +41,10 @@ services:
       DATABASE_URL: postgresql+asyncpg://clutchd:clutchd@db:5432/clutchd
       SYNC_DATABASE_URL: postgresql://clutchd:clutchd@db:5432/clutchd
       REDIS_URL: redis://redis:6379/0
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-950f7a372d6647e83034d1a92325cf5d62f78702ecee0d9f2335036a030011cf}
+      # REQUIRED — no default. Set in backend/.env (compose reads it
+      # automatically) or export before running compose. Never commit a
+      # real signing key: this value gates ALL auth tokens.
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in backend/.env or your shell}
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,https://clutchd.com,https://api.clutchd.com
       DEV_AUTO_VERIFY_PROVIDERS: "false"
       SEARCH_RADIUS_KM: "25"
@@ -70,7 +73,10 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://clutchd:clutchd@db:5432/clutchd
       REDIS_URL: redis://redis:6379/0
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-950f7a372d6647e83034d1a92325cf5d62f78702ecee0d9f2335036a030011cf}
+      # REQUIRED — no default. Set in backend/.env (compose reads it
+      # automatically) or export before running compose. Never commit a
+      # real signing key: this value gates ALL auth tokens.
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in backend/.env or your shell}
       SEARCH_RADIUS_KM: "25"
       FIREBASE_SERVICE_ACCOUNT: ${FIREBASE_SERVICE_ACCOUNT:-}
     command: celery -A app.tasks.worker.celery_app worker --loglevel=info
