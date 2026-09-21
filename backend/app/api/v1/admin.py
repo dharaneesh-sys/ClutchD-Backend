@@ -297,6 +297,57 @@ async def analytics(db: DbSession, user: AdminUser):
     }
 
 
+@router.get("/analytics/growth")
+async def analytics_growth(db: DbSession, user: AdminUser):
+    """Real 6-month growth series (current month + 5 previous) for the
+    admin overview chart. Buckets without activity are filled with 0 so
+    the chart always shows six continuous months."""
+    from sqlalchemy import text
+    users_rows = (
+        await db.execute(text("""
+            SELECT to_char(date_trunc('month', created_at), 'YYYY-MM-DD') AS month,
+                   COUNT(*) AS users
+            FROM users
+            WHERE created_at >= date_trunc('month', NOW()) - interval '5 months'
+            GROUP BY 1
+        """))
+    ).all()
+    revenue_rows = (
+        await db.execute(text("""
+            SELECT to_char(date_trunc('month', created_at), 'YYYY-MM-DD') AS month,
+                   COALESCE(SUM(amount), 0) AS revenue
+            FROM payments
+            WHERE created_at >= date_trunc('month', NOW()) - interval '5 months'
+            GROUP BY 1
+        """))
+    ).all()
+
+    users_by_month = {r.month: r.users for r in users_rows}
+    revenue_by_month = {r.month: r.revenue for r in revenue_rows}
+
+    series = []
+    cursor = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    cursor = cursor.replace(month=cursor.month - 5) if cursor.month > 5 else cursor.replace(
+        year=cursor.year - 1, month=cursor.month + 7
+    )
+    for _ in range(6):
+        key = cursor.strftime("%Y-%m-01")
+        series.append(
+            {
+                "date": key,
+                "month": cursor.strftime("%b"),
+                "users": int(users_by_month.get(key, 0)),
+                "revenue": float(revenue_by_month.get(key, 0) or 0),
+            }
+        )
+        cursor = (
+            cursor.replace(month=cursor.month + 1)
+            if cursor.month < 12
+            else cursor.replace(year=cursor.year + 1, month=1)
+        )
+    return {"series": series}
+
+
 # ── Mechanics List ────────────────────────────────────────────
 @router.get("/mechanics")
 async def list_mechanics(db: DbSession, user: AdminUser):
