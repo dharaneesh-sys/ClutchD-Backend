@@ -67,17 +67,22 @@ if [ -z "$TSIP" ]; then
   probl=1
 fi
 
-# ── 4. funnel still serving? ──
-# NOTE: capture-then-grep. `tailscale funnel status | grep -q` under
+# ── 4. API funnel (HTTPS 443) still serving? ──
+# NOTE 1: capture-then-grep. `tailscale funnel status | grep -q` under
 # pipefail returns 141 (SIGPIPE): grep exits after matching, tailscale
 # gets EPIPE writing the rest, and a SUCCESSFUL match looks like failure.
+# NOTE 2: match the "https://host" line SPECIFICALLY. The SSH funnel
+# (tcp://…:8443) also contains the hostname, so a bare hostname match
+# false-passes while the app-facing 443 funnel is gone (2026-09-21
+# incident: 443 vanished from the serve config, this check said "ok",
+# and the app could not reach the API at all).
 FUNNEL_OUT="$(tailscale funnel status 2>/dev/null || true)"
 case "$FUNNEL_OUT" in
-  *"$FUNNEL_HOST"*) : ;;
+  *"https://$FUNNEL_HOST"*) : ;;
   *)
-    log "funnel MISSING — re-enabling"
-    notify_api_alerts_log "tailscale funnel was gone — re-enabled by ssh-lifeline"
-    tailscale funnel --bg 8080 >> "$LOG" 2>&1
+    log "API funnel (https 443) MISSING — re-enabling"
+    notify_api_alerts_log "https funnel 443 was gone — re-enabled by ssh-lifeline"
+    tailscale funnel --bg --https=443 http://localhost:8000 >> "$LOG" 2>&1
     probl=1
     ;;
 esac
