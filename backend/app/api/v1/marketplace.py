@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select, func, or_
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import DbSession, get_current_user_optional, require_roles
@@ -754,7 +755,7 @@ async def list_orders(
     offset: int = Query(0, ge=0),
 ):
     user_id = user.id if user else None
-    query = select(MarketplaceOrder)
+    query = select(MarketplaceOrder).options(selectinload(MarketplaceOrder.items))
 
     if user_id:
         query = query.where(MarketplaceOrder.user_id == user_id)
@@ -768,10 +769,7 @@ async def list_orders(
 
     order_responses = []
     for order in orders:
-        items_result = await db.execute(
-            select(MarketplaceOrderItem).where(MarketplaceOrderItem.order_id == order.id)
-        )
-        order_items = items_result.scalars().all()
+        order_items = order.items
 
         order_responses.append(
             OrderResponse(
