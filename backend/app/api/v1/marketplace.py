@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -345,12 +345,38 @@ _seller_roles = require_roles(UserRole.seller, UserRole.admin)
 
 @router.post("/products", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
 @router.post("/marketplace/products", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
-async def create_product(body: ProductCreate, db: DbSession, user: User = Depends(_seller_roles)):
+async def create_product(
+    body: ProductCreate,
+    db: DbSession,
+    response: Response,
+    user: User = Depends(_seller_roles),
+):
     """Create a marketplace product as a parts seller (seller/admin roles).
+
+    Idempotent: clients send a stable ``clientRequestId`` (UUID) per form
+    submission. A retried/replayed POST with the same key returns the original
+    product (200) instead of inserting a duplicate row — root-cause fix for
+    uploads being duplicated many times over when slow links + retries
+    replayed the POST.
 
     Images are uploaded first via POST /api/uploads; pass the returned
     ``url`` (``/static/uploads/...``) or an absolute http(s) URL as ``image``.
     """
+    if body.client_request_id:
+        existing = (
+            (await db.execute(
+                select(MarketplaceProduct).where(
+                    MarketplaceProduct.client_request_id == body.client_request_id
+                )
+            ))
+            .scalars()
+            .first()
+        )
+        if existing:
+            # Replay of an already-committed submission — return the original
+            # row with 200 (not 201) so clients can tell creation from dedupe.
+            response.status_code = status.HTTP_200_OK
+            return to_product_response(existing)
     category_id, category_name = await _resolve_category(db, body.category, body.category_id)
     vendor = await _get_or_create_vendor(db, user, body.vendor_id)
     product = MarketplaceProduct(
@@ -366,6 +392,7 @@ async def create_product(body: ProductCreate, db: DbSession, user: User = Depend
         availability=body.availability,
         delivery_time=body.delivery_time,
         seller_user_id=user.id,
+        client_request_id=body.client_request_id,
     )
     db.add(product)
     await db.flush()

@@ -68,6 +68,9 @@ class ProductCreate(BaseModel):
     image: str = Field(min_length=1, max_length=500)
     availability: bool = True
     delivery_time: str | None = Field(default=None, max_length=50)
+    # Idempotency key: the client generates one UUID per form submission so a
+    # retried/replayed POST collapses to the original product server-side.
+    client_request_id: str | None = Field(default=None, max_length=64)
 
     @field_validator("name")
     @classmethod

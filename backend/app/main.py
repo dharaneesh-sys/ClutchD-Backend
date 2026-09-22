@@ -103,9 +103,26 @@ app.add_middleware(RequestSizeLimitMiddleware)
 app.include_router(api_router, prefix=settings.api_prefix)
 app.include_router(token_router, prefix=settings.api_prefix)
 
+class CachedStaticFiles(StaticFiles):
+    """StaticFiles with long-lived caching for uploaded media.
+
+    Upload filenames are random UUIDs, so a given URL's content can never
+    change. Without Cache-Control the WebView re-downloads every image
+    through the (slow, lossy) funnel edge on each cold start, and on a
+    stalled connection the <img> never completes — the listing silently
+    renders without its photo. With immutable caching each image is
+    fetched exactly once per device and previews become reliable.
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
 static_dir = Path(settings.upload_dir)
 static_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/static/uploads", StaticFiles(directory=str(static_dir)), name="static_uploads")
+app.mount("/static/uploads", CachedStaticFiles(directory=str(static_dir)), name="static_uploads")
 
 
 # ---- Security headers middleware ----

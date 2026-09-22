@@ -59,6 +59,10 @@ class MarketplaceProduct(Base):
     category: Mapped[str | None] = mapped_column(String(100), nullable=True)
     availability: Mapped[bool] = mapped_column(Boolean, default=True)
     delivery_time: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Idempotency: the client sends a stable UUID per form submission. A
+    # retried/replayed POST with the same key must not create a second row —
+    # the unique index collapses it back to the original product.
+    client_request_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

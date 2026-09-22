@@ -227,3 +227,48 @@ async def test_update_delete_404_missing(
     assert r1.status_code == 404, r1.text
     r2 = await client.delete(f"{BASE}/{missing}", headers=headers)
     assert r2.status_code == 404, r2.text
+
+
+async def test_create_product_idempotent_on_client_request_id(
+    db_session: AsyncSession, client: AsyncClient, test_seller
+):
+    """MP-P13: replaying the same clientRequestId must NOT duplicate the row.
+
+    Root cause of one seller's part appearing 17x: a slow connection made the
+    client replay the POST. The server must collapse replays to the original
+    product instead of inserting a new row per attempt.
+    """
+    headers = _headers(test_seller.user)
+    key = str(uuid.uuid4())
+
+    first = await client.post(
+        BASE, json=_payload(name="Idempotent Part", client_request_id=key), headers=headers
+    )
+    assert first.status_code == 201, first.text
+    first_id = first.json()["id"]
+
+    replay = await client.post(
+        BASE, json=_payload(name="Idempotent Part", client_request_id=key), headers=headers
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["id"] == first_id
+
+    rows = await db_session.execute(
+        select(MarketplaceProduct).where(MarketplaceProduct.client_request_id == key)
+    )
+    assert len(rows.scalars().all()) == 1
+
+
+async def test_create_product_distinct_keys_create_distinct_rows(
+    db_session: AsyncSession, client: AsyncClient, test_seller
+):
+    """MP-P14: different clientRequestIds (intentional re-listing) stay separate."""
+    headers = _headers(test_seller.user)
+    a = await client.post(
+        BASE, json=_payload(name="Part A", client_request_id=str(uuid.uuid4())), headers=headers
+    )
+    b = await client.post(
+        BASE, json=_payload(name="Part B", client_request_id=str(uuid.uuid4())), headers=headers
+    )
+    assert a.status_code == 201 and b.status_code == 201
+    assert a.json()["id"] != b.json()["id"]
