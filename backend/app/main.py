@@ -97,8 +97,8 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-app.add_middleware(RequestIDMiddleware)
 app.add_middleware(RequestSizeLimitMiddleware)
+app.add_middleware(RequestIDMiddleware)
 
 app.include_router(api_router, prefix=settings.api_prefix)
 app.include_router(token_router, prefix=settings.api_prefix)
