@@ -56,7 +56,7 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         status_code=429,
         error="Too Many Requests",
         detail="Rate limit exceeded. Please slow down.",
-        request_id=request.state.request_id,
+        request_id=getattr(request.state, "request_id", "unknown"),
     )
 
 app.add_middleware(SlowAPIMiddleware)
@@ -91,7 +91,7 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
                 content={
                     "error": "Request Too Large",
                     "detail": "Request too large (max 10MB)",
-                    "request_id": request.state.request_id,
+                    "request_id": getattr(request.state, "request_id", "unknown"),
                 },
             )
         return await call_next(request)
@@ -161,7 +161,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         status_code=exc.status_code,
         error=HTTPStatus(exc.status_code).phrase,
         detail=detail,
-        request_id=request.state.request_id,
+        request_id=getattr(request.state, "request_id", "unknown"),
     )
 
 
@@ -174,13 +174,13 @@ async def global_exception_handler(request: Request, exc: Exception):
             status_code=500,
             error="Internal Server Error",
             detail=str(exc),
-            request_id=request.state.request_id,
+            request_id=getattr(request.state, "request_id", "unknown"),
         )
     return _error_response(
         status_code=500,
         error="Internal Server Error",
         detail="Internal server error",
-        request_id=request.state.request_id,
+        request_id=getattr(request.state, "request_id", "unknown"),
     )
 
 
