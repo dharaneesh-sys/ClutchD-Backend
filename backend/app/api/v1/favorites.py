@@ -65,16 +65,16 @@ async def favorite_list(db: DbSession, user: CurrentUser):
     )
     favorites = r.unique().scalars().all()
 
+    # Batch category lookup: one query for all products instead of one per favorite.
+    cat_ids = {fav.product.category_id for fav in favorites if fav.product and fav.product.category_id}
+    cat_names: dict = {}
+    if cat_ids:
+        cr = await db.execute(select(MarketplaceCategory).where(MarketplaceCategory.id.in_(cat_ids)))
+        cat_names = {c.id: c.name for c in cr.scalars().all()}
+
     items = []
     for fav in favorites:
-        # Load category for each product
-        cat_name = None
-        if fav.product and fav.product.category_id:
-            cr = await db.execute(
-                select(MarketplaceCategory).where(MarketplaceCategory.id == fav.product.category_id)
-            )
-            cat = cr.scalar_one_or_none()
-            cat_name = cat.name if cat else None
+        cat_name = cat_names.get(fav.product.category_id) if fav.product else None
 
         items.append(_favorite_to_response(fav, fav.product, cat_name))
 

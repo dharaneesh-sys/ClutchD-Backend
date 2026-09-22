@@ -816,7 +816,7 @@ async def list_my_sales(
 
     # Distinct orders joined to their items → products owned by this seller.
     result = await db.execute(
-        select(MarketplaceOrder)
+        select(MarketplaceOrder).options(selectinload(MarketplaceOrder.items))
         .join(MarketplaceOrderItem, MarketplaceOrderItem.order_id == MarketplaceOrder.id)
         .join(
             MarketplaceProduct,
@@ -835,27 +835,25 @@ async def list_my_sales(
     )
     orders = result.scalars().all()
 
+    # Ownership across all orders in one query instead of one per order.
+    all_pids = {i.product_id for o in orders for i in o.items if i.product_id is not None}
+    owned_ids = set()
+    if all_pids:
+        owned = await db.execute(
+            select(MarketplaceProduct.id).where(
+                MarketplaceProduct.id.in_(all_pids),
+                or_(
+                    MarketplaceProduct.seller_user_id == user.id,
+                    (MarketplaceProduct.seller_user_id.is_(None)) & (MarketplaceProduct.vendor == display),
+                ),
+            )
+        )
+        owned_ids = {row[0] for row in owned.all()}
+
     order_responses = []
     for order in orders:
-        items_result = await db.execute(
-            select(MarketplaceOrderItem).where(MarketplaceOrderItem.order_id == order.id)
-        )
-        all_items = items_result.scalars().all()
-        # Keep only this seller's line items.
-        product_ids = {i.product_id for i in all_items if i.product_id is not None}
-        owned_ids = set()
-        if product_ids:
-            owned = await db.execute(
-                select(MarketplaceProduct.id).where(
-                    MarketplaceProduct.id.in_(product_ids),
-                    or_(
-                        MarketplaceProduct.seller_user_id == user.id,
-                        (MarketplaceProduct.seller_user_id.is_(None)) & (MarketplaceProduct.vendor == display),
-                    ),
-                )
-            )
-            owned_ids = {row[0] for row in owned.all()}
-        my_items = [i for i in all_items if i.product_id in owned_ids]
+        # Keep only this seller's line items (items eager-loaded above).
+        my_items = [i for i in order.items if i.product_id in owned_ids]
         if not my_items:
             continue
         order_responses.append(
