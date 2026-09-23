@@ -4,9 +4,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
+from sqlalchemy.exc import IntegrityError
 
 from app.api.audit import audit_log
 from app.api.deps import DbSession, require_admin
@@ -16,6 +17,8 @@ from app.models.enums import DisputeStatus, UserRole
 from app.models.garage import Garage
 from app.models.job import Job
 from app.models.mechanic import Mechanic
+from app.models.marketplace import MarketplaceCartItem, MarketplaceOrder, MarketplaceOrderItem
+from app.models.seller import Seller
 from app.models.notification import Notification
 from app.models.payment import Payment
 from app.models.user import User
@@ -34,6 +37,8 @@ def _user_display_name(db_user: User) -> str:
         return db_user.garage_profile.garage_name
     if db_user.role == UserRole.customer.value:
         return db_user.email.split("@")[0]
+    if db_user.role == UserRole.seller.value and db_user.seller_profile:
+        return db_user.seller_profile.store_name
     return db_user.email
 
 
@@ -42,12 +47,12 @@ def _user_display_name(db_user: User) -> str:
 async def list_users(
     db: DbSession,
     user: AdminUser,
-    role: str | None = Query(None, pattern="^(customer|mechanic|garage|admin)$"),
+    role: str | None = Query(None, pattern="^(customer|mechanic|garage|seller|admin)$"),
     status_filter: str | None = Query(None, alias="status", pattern="^(active|suspended|pending)$"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
 ):
-    q = select(User).options(joinedload(User.mechanic_profile), joinedload(User.garage_profile))
+    q = select(User).options(joinedload(User.mechanic_profile), joinedload(User.garage_profile), joinedload(User.seller_profile))
     if role:
         q = q.where(User.role == role)
     if status_filter == "active":
@@ -121,12 +126,43 @@ async def delete_user(
     if u.role == UserRole.admin.value:
         raise HTTPException(status_code=403, detail="Cannot delete another admin")
 
-    # Nullify foreign-key references before deletion
-    await db.execute(update(Payment).where(Payment.user_id == user_id).values(user_id=None))
-    await db.execute(update(AuditLog).where(AuditLog.user_id == user_id).values(user_id=None))
+    # Tables whose user FK has no DB-level cascade (or none at all) must be
+    # cleared explicitly. Payment.user_id / AuditLog.user_id are NOT NULL,
+    # so the old nullify approach raised IntegrityError (the delete failure).
+    # DB ondelete=CASCADE/SET NULL handles the rest (profiles, jobs,
+    # vehicles, notifications, payments, reviews, tokens, tickets, fleet).
+    await db.execute(delete(AuditLog).where(AuditLog.user_id == user_id))
+    await db.execute(
+        delete(MarketplaceCartItem).where(MarketplaceCartItem.user_id == user_id)
+    )
+    order_ids = (
+        await db.execute(select(MarketplaceOrder.id).where(MarketplaceOrder.user_id == user_id))
+    ).scalars().all()
+    if order_ids:
+        await db.execute(
+            delete(MarketplaceOrderItem).where(MarketplaceOrderItem.order_id.in_(order_ids))
+        )
+        await db.execute(delete(MarketplaceOrder).where(MarketplaceOrder.id.in_(order_ids)))
 
-    await db.delete(u)
-    await db.flush()
+    try:
+        await db.delete(u)
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        # Linked history elsewhere (e.g. disputes) blocks hard delete:
+        # deactivate + anonymize so the account is dead but history stays intact.
+        u2 = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        if not u2:
+            raise HTTPException(status_code=404, detail="User not found")
+        u2.is_active = False
+        u2.email = f"deleted_{user_id}@deleted.local"
+        u2.phone = ""
+        await db.flush()
+        return {
+            "ok": True,
+            "deactivated": True,
+            "message": f"User {user_id} has linked records and was deactivated instead.",
+        }
     return {"ok": True, "message": f"User {user_id} deleted."}
 
 
@@ -157,6 +193,61 @@ async def verify_garage(garage_id: UUID, body: VerifyBody, db: DbSession, user: 
     g.verified = body.verified
     await db.flush()
     return {"ok": True, "verified": g.verified}
+
+
+@router.patch("/seller/{seller_id}/verify")
+@audit_log("verify_seller", "seller", entity_id_arg="seller_id")
+async def verify_seller(seller_id: UUID, body: VerifyBody, db: DbSession, user: AdminUser):
+    result = await db.execute(select(Seller).where(Seller.id == seller_id))
+    s = result.scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=404, detail="Seller not found")
+    s.verified = body.verified
+    await db.flush()
+    return {"ok": True, "verified": s.verified}
+
+
+@router.get("/sellers")
+async def list_sellers(db: DbSession, user: AdminUser):
+    from app.models.marketplace import MarketplaceProduct
+
+    q = (
+        select(Seller)
+        .options(joinedload(Seller.user))
+        .order_by(Seller.created_at.desc())
+    )
+    sellers = (await db.execute(q)).unique().scalars().all()
+
+    # Live listings per seller in one query (not one per seller).
+    seller_ids = [s.user_id for s in sellers]
+    listing_counts: dict = {}
+    if seller_ids:
+        rows = await db.execute(
+            select(MarketplaceProduct.seller_user_id, func.count(MarketplaceProduct.id))
+            .where(MarketplaceProduct.seller_user_id.in_(seller_ids))
+            .group_by(MarketplaceProduct.seller_user_id),
+        )
+        for uid, cnt in rows:
+            listing_counts[str(uid)] = cnt
+
+    return {
+        "sellers": [
+            {
+                "id": str(s.id),
+                "userId": str(s.user_id),
+                "storeName": s.store_name,
+                "ownerName": s.owner_name,
+                "phone": s.phone,
+                "email": s.user.email if s.user else None,
+                "isActive": s.user.is_active if s.user else s.is_active,
+                "verified": s.verified,
+                "rating": s.rating,
+                "listings": listing_counts.get(str(s.user_id), 0),
+                "createdAt": s.created_at.isoformat() if s.created_at else None,
+            }
+            for s in sellers
+        ]
+    }
 
 
 # ── KYC Review ────────────────────────────────────────────────
@@ -284,7 +375,10 @@ async def analytics(db: DbSession, user: AdminUser):
             (SELECT COUNT(*) FROM jobs) AS total_jobs,
             (SELECT COALESCE(SUM(amount), 0) FROM payments) AS total_revenue,
             (SELECT COUNT(*) FROM mechanics) AS total_mechanics,
-            (SELECT COUNT(*) FROM garages) AS total_garages
+            (SELECT COUNT(*) FROM garages) AS total_garages,
+            (SELECT COUNT(*) FROM sellers) AS total_sellers,
+            (SELECT COUNT(*) FROM marketplace_products) AS total_products,
+            (SELECT COUNT(*) FROM fleets) AS total_fleets
     """))).one()
     return {
         "totalUsers": row.total_users,
@@ -293,6 +387,9 @@ async def analytics(db: DbSession, user: AdminUser):
         "activeProviders": (row.total_mechanics or 0) + (row.total_garages or 0),
         "totalMechanics": row.total_mechanics,
         "totalGarages": row.total_garages,
+        "totalSellers": row.total_sellers,
+        "totalProducts": row.total_products,
+        "totalFleets": row.total_fleets,
         "totalRevenue": row.total_revenue,
     }
 
