@@ -33,6 +33,7 @@ class Garage(Base):
     kyc_note: Mapped[str | None] = mapped_column(String(1024), nullable=True, comment="Admin review note (e.g. rejection reason)")
     penalized: Mapped[bool] = mapped_column(Boolean, default=False)
     penalty_amount: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="Penalty amount in paise")
+    rent_amount_paise: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="Monthly rent override in paise; null = billing_config default")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship("User", back_populates="garage_profile")

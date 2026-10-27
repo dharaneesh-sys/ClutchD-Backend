@@ -184,59 +184,14 @@ async def seed() -> None:
     SessionLocal = get_session_local()
 
     async with SessionLocal() as session:
-        # 1. Admin (Multiple variations to handle frontend validation and typos)
-        await get_or_create_user(session, "admin21907.com", "clutchD123", "admin", True)
-        await get_or_create_user(session, "admin@21907.com", "clutchD123", "admin", True)
-        await get_or_create_user(session, "admin@1907.com", "clutchD123", "admin", True)
-
-        # 2. Vijay Kumar
-        mu1 = await get_or_create_user(session, "mechanic@demo.com", "demo123456", "mechanic")
-        res = await session.execute(select(Mechanic).where(Mechanic.user_id == mu1.id))
-        if not res.scalar_one_or_none():
-            mech = Mechanic(
-                user_id=mu1.id,
-                full_name="Vijay Kumar",
-                phone="9876543210",
-                experience="5",
-                expertise=["engine", "brakes", "electrical"],
-                location_address="RS Puram, Coimbatore",
-                lat=11.0168,
-                lon=76.9558,
-                rating=4.7,
-                verified=True,
-                available=True,
-            )
-            session.add(mech)
-
-        # 3. SpeedFix Garage
-        gu1 = await get_or_create_user(session, "garage@demo.com", "demo123456", "garage")
-        res = await session.execute(select(Garage).where(Garage.user_id == gu1.id))
-        if not res.scalar_one_or_none():
-            garage = Garage(
-                user_id=gu1.id,
-                garage_name="SpeedFix Auto Garage",
-                owner_name="Suresh Patel",
-                phone="9876543211",
-                services=["engine", "brakes", "ac", "electrical", "tires"],
-                mechanic_count=8,
-                operating_hours="8:00 AM - 9:00 PM",
-                location_address="Saibaba Colony, Coimbatore",
-                lat=11.025,
-                lon=76.94,
-                rating=4.5,
-                verified=True,
-            )
-            session.add(garage)
-
-        # ---- Customer ----
-        await get_or_create_user(session, "customer@demo.com", "demo123456", "customer")
-
-        await session.commit()
-        print("Seeded all demo accounts:")
-        print("  admin@21907.com / clutchD123")
-        print("  mechanic@demo.com / demo123456")
-        print("  garage@demo.com / demo123456")
-        print("  customer@demo.com / demo123456")
+        # No pre-seeded sample or QA accounts. An initial admin is created only
+        # when both env vars are set (never with a hard-coded password).
+        admin_email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "").strip()
+        admin_password = os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "")
+        if admin_email and admin_password:
+            await get_or_create_user(session, admin_email, admin_password, "admin", True)
+            await session.commit()
+            print(f"Bootstrap admin ensured: {admin_email}")
 
         # ---- Marketplace seed ----
         await seed_marketplace(session)

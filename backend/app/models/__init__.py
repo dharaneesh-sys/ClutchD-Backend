@@ -1,4 +1,11 @@
 from app.models.audit_log import AuditLog
+from app.models.billing import (
+    BillingConfig,
+    IncentiveRule,
+    ProviderLedgerEntry,
+    ProviderOnboarding,
+    RentInvoice,
+)
 from app.models.dispute import Dispute
 from app.models.fleet import Fleet, FleetBooking
 from app.models.garage import Garage, GarageMechanic
@@ -35,6 +42,11 @@ from app.models.user import User
 from app.models.vehicle import Vehicle
 
 __all__ = [
+    "BillingConfig",
+    "IncentiveRule",
+    "ProviderLedgerEntry",
+    "ProviderOnboarding",
+    "RentInvoice",
     "User",
     "CustomerProfile",
     "Mechanic",
