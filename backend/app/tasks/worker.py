@@ -164,3 +164,31 @@ def dispatch_offer_push(job_id: str, expected_count: int) -> None:
         asyncio.run(_run())
     except Exception as e:
         logger.exception("dispatch_offer_push failed: %s", e)
+
+
+# ── Partner billing (inert unless settings.billing_enabled) ───────────────
+from celery.schedules import crontab  # noqa: E402
+
+celery_app.conf.beat_schedule = {
+    **(celery_app.conf.beat_schedule or {}),
+    # 00:10 Asia/Kolkata on the 1st == 18:40 UTC on the last day; run daily
+    # at 18:45 UTC instead: issuing is idempotent per garage per month.
+    "billing.issue_monthly_rent": {"task": "billing.issue_monthly_rent", "schedule": crontab(hour=18, minute=45)},
+}
+
+
+@celery_app.task(name="billing.issue_monthly_rent")
+def issue_monthly_rent_task() -> dict:
+    from app.db.session import get_session_local
+    from app.services import billing_service
+
+    async def _run() -> dict:
+        SessionLocal = get_session_local()
+        async with SessionLocal() as db:
+            created = await billing_service.issue_monthly_rent(db)
+            overdue = await billing_service.mark_overdue(db)
+            await db.commit()
+            return {"created": created, "overdue": overdue}
+
+    return asyncio.run(_run())
+

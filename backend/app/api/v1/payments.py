@@ -183,6 +183,8 @@ async def payment_verify(body: PaymentVerifyRequest, db: DbSession, user: Curren
     if job:
         from app.services.payout_service import process_payouts
         await process_payouts(db, pmt, job)
+        from app.services.billing_service import record_capture
+        await record_capture(db, job)
         
     return {"ok": True, "status": "captured"}
 
@@ -243,6 +245,8 @@ async def payment_webhook(request: Request, db: DbSession):
         if job:
             from app.services.payout_service import process_payouts
             await process_payouts(db, pmt, job)
+            from app.services.billing_service import record_capture
+            await record_capture(db, job)
 
     elif event == "payment.failed" and pmt.status == "pending":
         pmt.status = "failed"
@@ -391,6 +395,8 @@ async def cash_payment(body: CashPaymentRequest, db: DbSession, user: CurrentUse
     db.add(pmt)
     job.status = "completed"
     await db.flush()
+    from app.services.billing_service import record_capture
+    await record_capture(db, job)
 
     # Live update: customer's tracker moves to Completed, provider's queue
     # clears. WS push + persistent notification, mirroring patch_job_status.

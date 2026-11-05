@@ -79,6 +79,10 @@ class Settings(BaseSettings):
 
     # Platform UPI ID for receiving platform fees. Set via env var PLATFORM_UPI_ID.
     platform_upi_id: str = "amdevanand206@oksbi"
+    # Partner billing (rent/incentives). Off by default; enable only after
+    # the migration is applied and verified (see docs/BILLING_ROLLOUT.md).
+    billing_enabled: bool = False
+    billing_timezone: str = "Asia/Kolkata"
 
     # When true, use mock Razorpay client even in production (for testing).
     use_mock_payments: bool = False
